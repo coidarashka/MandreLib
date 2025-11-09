@@ -1196,6 +1196,27 @@ class MandreSettings:
             # Replace any previous builder to avoid duplication on reloads
             MandreSettings._custom_blocks[pid] = []
 
+            # Auto-translate message texts so preview adapts to UI language
+            try:
+                texts = []
+                for m in messages or []:
+                    txt = m.get('text')
+                    if isinstance(txt, str) and txt.strip():
+                        texts.append(txt.strip())
+                if texts:
+                    def _translate_and_refresh():
+                        try:
+                            Mandre.auto_translate_inline_strings(plugin, texts)
+                        except Exception:
+                            pass
+                        try:
+                            run_on_ui_thread(lambda: Mandre.apply_and_refresh_settings(plugin))
+                        except Exception:
+                            pass
+                    run_on_queue(_translate_and_refresh)
+            except Exception:
+                pass
+
             def _builder(ctx):
                 try:
                     from android.widget import LinearLayout, ScrollView
@@ -1268,7 +1289,13 @@ class MandreSettings:
                         try:
                             # Build a private-dialog style message (no name line)
                             sender_id = 10000 + idx
-                            tl = TLRPC.TL_message(); tl.id = random.randint(1, 1_000_000); tl.date = int(time.time()); tl.message = str(m.get('text') or '')
+                            # Localize message text through Mandre.t (auto-translate fills cache asynchronously)
+                            raw_text = str(m.get('text') or '')
+                            try:
+                                localized_text = Mandre.t(plugin, raw_text)
+                            except Exception:
+                                localized_text = raw_text
+                            tl = TLRPC.TL_message(); tl.id = random.randint(1, 1_000_000); tl.date = int(time.time()); tl.message = localized_text
                             chat_peer = TLRPC.TL_peerUser(); chat_peer.user_id = 1; tl.peer_id = chat_peer
                             from_peer = TLRPC.TL_peerUser(); from_peer.user_id = sender_id; tl.from_id = from_peer
                             tl.out = False
@@ -1279,7 +1306,14 @@ class MandreSettings:
                                 cell.setOnLongClickListener(OnLongClickListener(lambda: True)); cell.setOnClickListener(OnClickListener(lambda: None))
                             except Exception:
                                 pass
-                            row.addView(cell)
+                            # Make cell take remaining width so long lines can wrap
+                            try:
+                                from android.view import ViewGroup
+                                from android.widget import LinearLayout as _LL
+                                lp_cell = _LL.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
+                                row.addView(cell, lp_cell)
+                            except Exception:
+                                row.addView(cell)
                         except Exception:
                             pass
 
