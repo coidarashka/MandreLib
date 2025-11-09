@@ -1,4 +1,4 @@
-"""
+
 ╭─────────────────────────────────────────────────────────────╮
 │                                                             │
 │  ███╗   ███╗ █████╗ ███╗   ██╗██████╗ ██████╗ ███████╗      │
@@ -26,7 +26,7 @@
 #   ( o.o )
 #    > ^ <
 # Этот котик проверил код, и он идеален. Мяу!
-# свага
+# кангелочек Я И ЕСТЬ ИНТЕРНЕТ АНГЕЛ УВЕРЯЮ...... кангел это чеп такое? братан я ввижу внизу кастыль n\n\  а не проще просто """  текст """  ?!?!?
 __id__ = "mandre_lib"
 __name__ = "MandreLib"
 __version__ = "1.6.6"
@@ -77,7 +77,7 @@ from androidx.core.content import FileProvider
 from androidx.core.app import NotificationCompat, NotificationManagerCompat, Person
 from hook_utils import find_class
 from java.io import File, FileOutputStream
-from java import dynamic_proxy
+from java import dynamic_proxy, jclass
 from java.lang import Runnable, Float as JFloat, Class as JClass, Integer as JInteger
 from java.lang import Runnable as JRunnable
 from java.util import ArrayList, Locale, TimeZone
@@ -1176,6 +1176,204 @@ class MandreSettings:
             return uniq
         except Exception:
             return strings
+
+    # --- Chat preview block integration (scoped to plugin id) ---
+    _custom_blocks: Dict[str, List[Any]] = {}
+
+    @staticmethod
+    def add_chat_preview(plugin: BasePlugin, messages: List[Dict[str, Any]]):
+        """Register a Telegram-style chat preview block for the given plugin.
+        Usage:
+            Mandre.use_persistent_storage(self)
+            Mandre.Settings.add_chat_preview(self, SAMPLE_MESSAGES)
+        """
+        try:
+            pid = getattr(plugin, 'id', None) or getattr(plugin, 'getId', lambda: None)()
+            if not pid:
+                pid = getattr(plugin, '__id__', None)
+            if not pid:
+                return
+            # Replace any previous builder to avoid duplication on reloads
+            MandreSettings._custom_blocks[pid] = []
+
+            def _builder(ctx):
+                try:
+                    from android.widget import LinearLayout, ScrollView
+                    from android.view import ViewGroup
+                    from org.telegram.messenger import AndroidUtilities, UserConfig, MessageObject, MessagesController
+                    from org.telegram.tgnet import TLRPC
+                    from org.telegram.ui.Cells import ChatMessageCell
+                    from org.telegram.messenger import ImageLocation
+                    from org.telegram.ui.Components import BackupImageView, AvatarDrawable
+                    import time, random
+                    from com.exteragram.messenger.plugins import PluginsController
+
+                    scroll = ScrollView(ctx)
+                    content = LinearLayout(ctx)
+                    content.setOrientation(LinearLayout.VERTICAL)
+                    try:
+                        content.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12))
+                    except Exception:
+                        pass
+                    scroll.addView(content)
+
+                    account = 0
+                    try:
+                        account = UserConfig.getSelectedAccount() if hasattr(UserConfig, 'getSelectedAccount') else UserConfig.getInstance(0).currentAccount
+                    except Exception:
+                        pass
+
+                    # Respect plugin toggle: preview_enabled
+                    try:
+                        enabled = PluginsController.getInstance().getPluginSettingBoolean(pid, "preview_enabled", True)
+                        if not enabled:
+                            # Return an empty spacer to keep layout sane
+                            spacer = LinearLayout(ctx)
+                            return spacer
+                    except Exception:
+                        pass
+
+                    for idx, m in enumerate(messages or []):
+                        row = LinearLayout(ctx)
+                        row.setOrientation(LinearLayout.HORIZONTAL)
+                        try:
+                            lp_row = ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            lp_row.topMargin = AndroidUtilities.dp(8)
+                            lp_row.bottomMargin = AndroidUtilities.dp(8)
+                            row.setLayoutParams(lp_row)
+                        except Exception:
+                            pass
+
+                        ava = BackupImageView(ctx)
+                        try:
+                            size = AndroidUtilities.dp(42)
+                            lp_ava = ViewGroup.MarginLayoutParams(size, size)
+                            lp_ava.rightMargin = AndroidUtilities.dp(6)
+                            ava.setLayoutParams(lp_ava)
+                            ava.setRoundRadius(int(size/2))
+                        except Exception:
+                            pass
+                        ad = AvatarDrawable()
+                        try:
+                            ad.setInfo(0, str(m.get('name') or 'User'), None)
+                        except Exception:
+                            pass
+                        try:
+                            url = m.get('avatar')
+                            ava.setImage(ImageLocation.getForPath(url), '50_50', ad, None)
+                        except Exception:
+                            ava.setImageDrawable(ad)
+                        row.addView(ava)
+
+                        try:
+                            # Build a private-dialog style message (no name line)
+                            sender_id = 10000 + idx
+                            tl = TLRPC.TL_message(); tl.id = random.randint(1, 1_000_000); tl.date = int(time.time()); tl.message = str(m.get('text') or '')
+                            chat_peer = TLRPC.TL_peerUser(); chat_peer.user_id = 1; tl.peer_id = chat_peer
+                            from_peer = TLRPC.TL_peerUser(); from_peer.user_id = sender_id; tl.from_id = from_peer
+                            tl.out = False
+                            mo = MessageObject(account, tl, False, False)
+                            cell = ChatMessageCell(ctx, account); cell.setMessageObject(mo, None, False, False, False)
+                            try:
+                                from android_utils import OnLongClickListener, OnClickListener
+                                cell.setOnLongClickListener(OnLongClickListener(lambda: True)); cell.setOnClickListener(OnClickListener(lambda: None))
+                            except Exception:
+                                pass
+                            row.addView(cell)
+                        except Exception:
+                            pass
+
+                        content.addView(row)
+
+                    # Consume long press on the whole block to prevent list long-click
+                    try:
+                        from android_utils import OnLongClickListener
+                        scroll.setOnLongClickListener(OnLongClickListener(lambda: True))
+                    except Exception:
+                        pass
+
+                    return scroll
+                except Exception:
+                    return None
+
+            MandreSettings._custom_blocks[pid].append(_builder)
+            MandreSettings._ensure_hooks()
+        except Exception:
+            log(f"[MandreSettings] add_chat_preview error: {traceback.format_exc()}")
+
+    @staticmethod
+    def _ensure_hooks():
+        # Hook PluginSettingsActivity.fillItems to append custom blocks for the matching plugin
+        try:
+            if getattr(MandreSettings, '_hooks_installed', False):
+                return
+            MandreSettings._hooks_installed = True
+            plugin_settings_class = find_class("com.exteragram.messenger.plugins.ui.PluginSettingsActivity")
+            if not plugin_settings_class:
+                return
+            ArrayList = jclass("java.util.ArrayList")
+            UniversalAdapter = jclass("org.telegram.ui.Components.UniversalAdapter")
+            method = plugin_settings_class.getClass().getDeclaredMethod("fillItems", ArrayList, UniversalAdapter)
+            method.setAccessible(True)
+
+            class _Hook(MethodHook):
+                def after_hooked_method(self, param):
+                    try:
+                        activity = param.thisObject; items = param.args[0]
+                        plugin_obj = get_private_field(activity, "plugin"); pid = plugin_obj.getId() if plugin_obj else None
+                        builders = MandreSettings._custom_blocks.get(pid)
+                        if not builders: return
+                        UItem = jclass("org.telegram.ui.Components.UItem")
+                        for b in builders:
+                            try:
+                                view = b(activity.getContext())
+                                if view is None: continue
+                                # Insert preview above the last item, so toggles/descriptions stay below
+                                try:
+                                    size = items.size()
+                                    insert_pos = size - 1 if size > 0 else size
+                                    if insert_pos < 0:
+                                        insert_pos = 0
+                                    items.add(insert_pos, UItem.asCustom(view))
+                                except Exception:
+                                    items.add(UItem.asCustom(view))
+                            except Exception:
+                                pass
+                    except Exception: pass
+
+            # Attach via the running MandreLib plugin instance
+            try:
+                if '_mandrelib_instance' in globals() and _mandrelib_instance is not None:
+                    _mandrelib_instance.hook_method(method, _Hook())
+            except Exception:
+                pass
+
+            # Also guard settings long-click to avoid NPE for custom items
+            try:
+                UItem = jclass("org.telegram.ui.Components.UItem")
+                View = jclass("android.view.View")
+                IntCls = jclass("java.lang.Integer")
+                FloatCls = jclass("java.lang.Float")
+                onLongClick = plugin_settings_class.getClass().getDeclaredMethod(
+                    "onLongClick", UItem, View, IntCls.TYPE, FloatCls.TYPE, FloatCls.TYPE
+                )
+                onLongClick.setAccessible(True)
+
+                class _LongHook(MethodHook):
+                    def before_hooked_method(self, param):
+                        try:
+                            item = param.args[0]
+                            # Cancel long click if backing setting is missing (custom view)
+                            if item is None or (hasattr(item, 'settingItem') and item.settingItem is None):
+                                param.setResult(False)
+                        except Exception:
+                            pass
+
+                _mandrelib_instance.hook_method(onLongClick, _LongHook())
+            except Exception:
+                pass
+        except Exception:
+            log(f"[MandreSettings] ensure_hooks error: {traceback.format_exc()}")
 
 class MandreNotification:
     @staticmethod
