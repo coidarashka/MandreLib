@@ -17,7 +17,7 @@ MandreLib — это универсальная библиотека для ра
 Чтобы использовать MandreLib, сначала нужно её импортировать и активировать:
 
 ```python
-from mandre_lib import Mandre, MandreData, MandreUI, MandreTTS, MandreAuth, MandreShare, MandreDevice, MandreNotification, MandrePip, MandreWeb, MandreSend
+from mandre_lib import Mandre, MandreData, MandreUI, MandreTTS, MandreAuth, MandreShare, MandreDevice, MandreNotification, MandreInstall, MandreWeb, MandreSend
 from base_plugin import BasePlugin
 
 class MyPlugin(BasePlugin):
@@ -25,8 +25,9 @@ class MyPlugin(BasePlugin):
         # Активируем персистентное хранилище (сохранение данных)
         Mandre.use_persistent_storage(self)
         
-        # Опционально: убедимся что PIP готов (для Python пакетов)
-        Mandre.Pip.ensure_ready()
+        # Опционально: проверить готовность PIP без UI-уведомлений
+        if MandreInstall("check_status"):
+             self.log("PIP готов к работе")
         
         self.log("Плагин загружен, MandreLib активирована")
 ```
@@ -307,86 +308,40 @@ def create_settings(self):
 
 ---
 
-## 3. PIP менеджер (MandrePip) ⭐ НОВОЕ
+## 3. Установщик пакетов (MandreInstall) ⭐ НОВОЕ
 
-MandreLib теперь включает полноценный PIP-менеджер для установки Python пакетов в Android окружении.
+`MandreInstall` — это универсальный инструмент для проверки и установки зависимостей.
 
-### Быстрая установка пакетов
+### Проверка статуса PIP
 
 ```python
-# Установить один пакет
-Mandre.Pip.install("requests")
-
-# Установить несколько пакетов одновременно
-Mandrelib(["pyrogram", "asyncio", "aiohttp"])
-
-# Убедиться что PIP готов
-Mandre.Pip.ensure_ready()
+# Возвращает True, если pip инициализирован, False - если нет
+is_ready = MandreInstall("check_status")
+if is_ready:
+    self.log("Система пакетов готова")
 ```
 
-### Работа с PIP напрямую
+### Установка пакетов
 
 ```python
-# Установка с дополнительными параметрами
-code, out, err = Mandre.Pip.pip([
-    "install", 
-    "--upgrade", 
-    "--no-warn-conflicts",
-    "colorama==0.4.6"
-])
+# Установка по имени (если есть в PyPI или уже скачан)
+MandreInstall("requests")
 
-if code == 0:
-    BulletinHelper.show_success("Пакет установлен!")
-else:
-    BulletinHelper.show_error(f"Ошибка: {err}")
+# Установка по прямой ссылке на .whl
+MandreInstall("https://files.pythonhosted.org/.../some_lib.whl")
 
-# Проверить установленные пакеты
-code, out, err = Mandre.Pip.pip(["list"])
-self.log(f"Установленные пакеты:\n{out}")
+# Установка списка зависимостей
+MandreInstall(["aiohttp", "beautifulsoup4"])
 ```
 
-### Импорт установленных модулей
+### Импорт с автоматической установкой
 
 ```python
-# Установка и импорт в одном флаконе
 try:
     import requests
 except ImportError:
-    Mandre.Pip.install("requests")
-    requests = Mandre.Pip.import_module("requests")
-
-# Использование установленного пакета
-response = requests.get("https://api.github.com/users/octocat")
-if response.status_code == 200:
-    data = response.json()
-    self.log(f"Пользователь: {data['name']}")
-```
-
-### Кастомные настройки PIP
-
-Настройки PIP можно конфигурировать через настройки MandreLib:
-
-```python
-def create_settings(self):
-    return [
-        # ... другие настройки ...
-        
-        Input(
-            key="pip_index_url", 
-            text="Индекс пакетов (опционально)",
-            subtext="Кастомный PyPI индекс",
-            default="",
-            icon="msg_edit_solar"
-        ),
-        
-        Input(
-            key="pip_proxy", 
-            text="HTTP прокси (опционально)",
-            subtext="Формат: http://user:pass@host:port",
-            default="",
-            icon="msg_edit_solar"
-        ),
-    ]
+    MandreInstall("requests")
+    import requests
 ```
 
 ---
@@ -587,7 +542,7 @@ MandreDevice предоставляет подробную информацию 
 def get_device_info(self):
     device_info = Mandre.Device.get_device_info()
     
-    if "error" in device_info:
+    if "error" in info:
         self.log(f"Ошибка: {device_info['error']}")
         return
     
@@ -1080,7 +1035,7 @@ __min_version__ = "11.9.0"
 from base_plugin import BasePlugin, HookResult, HookStrategy
 from ui.settings import Header, Text, Divider, Input
 from ui.bulletin import BulletinHelper
-from mandre_lib import Mandre
+from mandre_lib import Mandre, MandreInstall
 import time
 import tempfile
 import json
@@ -1095,7 +1050,8 @@ class AdvancedDemoPlugin(BasePlugin):
         self.add_on_send_message_hook()
         
         # Устанавливаем дополнительные пакеты
-        Mandre.Pip.ensure_ready()
+        if MandreInstall("check_status"):
+             MandreInstall("requests")
         
         # Регистрируем команды
         Mandre.register_command(self, "device", self.cmd_device)
@@ -1572,7 +1528,7 @@ def on_plugin_unload(self):
     Mandre.cancel_task(self, "infinite")
 ```
 
-**4. Неправильная работа с временными файлами**
+**4. Неправильная работа с временных файлами**
 ```python
 # ❌ Неправильно
 def share_data(self):
@@ -1616,8 +1572,8 @@ response = requests.get("https://api.example.com")
 try:
     import requests
 except ImportError:
-    Mandre.Pip.install("requests")
-    requests = Mandre.Pip.import_module("requests")
+    MandreInstall("requests")
+    import requests
 
 response = requests.get("https://api.example.com")
 ```
@@ -1722,14 +1678,14 @@ def background_check(self):
 |-------|----------|
 | `request(on_success, on_failure, title, description)` | Запрашивает аутентификацию |
 
-### MandrePip (PIP менеджер)
+### MandreInstall (Установщик)
 
 | Метод | Описание |
 |-------|----------|
-| `ensure_ready()` | Инициализирует PIP |
-| `pip(args)` | Выполняет PIP команду |
-| `install(spec)` | Устанавливает пакет |
-| `import_module(mod)` | Импортирует модуль после установки |
+| `MandreInstall("check_status")` | Проверяет готовность PIP (bool) |
+| `MandreInstall("pkg_name")` | Устанавливает пакет |
+| `MandreInstall("url.whl")` | Устанавливает .whl по ссылке |
+| `MandreInstall(["a", "b"])` | Устанавливает список |
 
 ### MandreWeb (веб-рендеринг)
 
@@ -2071,17 +2027,18 @@ class SmartNotifierPlugin
 ```python
 # Устанавливайте пакеты только при необходимости
 def ensure_required_packages(self):
-    required_packages = {
-        'requests': 'HTTP библиотека',
-        'pillow': 'Работа с изображениями'
-    }
-    
-    for package, description in required_packages.items():
-        try:
-            __import__(package)
-        except ImportError:
-            self.log(f"Установка {package} для {description}")
-            Mandre.Pip.install(package)
+    if MandreInstall("check_status"):
+        required_packages = {
+            'requests': 'HTTP библиотека',
+            'pillow': 'Работа с изображениями'
+        }
+        
+        for package, description in required_packages.items():
+            try:
+                __import__(package)
+            except ImportError:
+                self.log(f"Установка {package} для {description}")
+                MandreInstall(package)
 ```
 
 ### 4. Эффективное использование памяти
@@ -2129,7 +2086,7 @@ def process_large_data(self, data_source):
 MandreLib 1.6.6 предоставляет всё необходимое для создания мощных и функциональных плагинов:
 
 ✅ **Персистентное хранилище** — данные сохраняются автоматически  
-✅ **PIP менеджер** — установка Python пакетов  
+✅ **MandreInstall** — установка Python пакетов  
 ✅ **Веб-рендеринг** — HTML в PNG конвертер  
 ✅ **UI компоненты** — готовые диалоги и селекторы  
 ✅ **Отправка файлов** — делитесь текстом и файлами любых типов  
@@ -2147,3 +2104,49 @@ MandreLib 1.6.6 предоставляет всё необходимое для 
 Используй эту документацию как справочник при разработке плагинов. Передавай её AI-ассистентам для генерации кода. Комбинируй функции для создания уникальных решений.
 
 **Удачи в разработке! 🚀**
+---
+
+## Превью чата (MandreSettings)
+
+Превью двух сообщений в стиле Telegram прямо в настройках плагина. Логика целиком в MandreLib, плагин минимальный. Поддерживаются:
+
+- Автоперевод строк (DSL и тексты сообщений)
+- Перенос длинных строк в пузыре (`weight=1f`)
+- Круглый аватар и плотный отступ
+- Безопасный long‑press (без крашей)
+
+### Вызов из плагина (2 строки)
+
+```python
+Mandre.use_persistent_storage(self)
+Mandre.Settings.add_chat_preview(self, SAMPLE_MESSAGES)
+```
+
+`SAMPLE_MESSAGES` — список:
+
+```python
+[
+  {"name": "Alice", "text": "Hello! This is a sample.", "avatar": AVATAR_URL_1},
+  {"name": "Bob",   "text": "Okay, showing preview in settings.", "avatar": AVATAR_URL_2},
+]
+```
+
+### Разметка настроек (DSL)
+
+Превью вставляется перед последним пунктом. Чтобы тумблер был ниже превью — поставьте его последним:
+
+```xml
+<header text="Chat Preview"/>
+<divider text="Avatars come from AVATAR_URL_1/2"/>
+<switch key="preview_enabled" text="Show preview" subtext="Displays two messages below" icon="msg_settings" default="true"/>
+```
+
+### Перевод
+
+- MandreSettings автоматически собирает строки из DSL.
+- MandreLib ставит в очередь автоперевод `messages[*].text` и после завершения обновляет экран.
+- При рендере используется локализованный текст; если кеш ещё не готов — обновление подтянет перевод.
+
+### Пример плагина
+
+См. файл `3/Examples/ChatPreview_Mandre_Example.plugin` — готовый минимальный пример с константами аватаров, вызовом `add_chat_preview` и DSL.
