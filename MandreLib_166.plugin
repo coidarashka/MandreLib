@@ -1,4 +1,4 @@
-
+"""
 ╭─────────────────────────────────────────────────────────────╮
 │                                                             │
 │  ███╗   ███╗ █████╗ ███╗   ██╗██████╗ ██████╗ ███████╗      │
@@ -306,16 +306,18 @@ def _mandrelib_pip_normalize(argv: list, site_dir: str, settings_getter) -> list
     return [cmd] + flags + rest
 
 class MandrePip:
+    """Internal PIP Wrapper. Use MandreInstall for public API."""
     @staticmethod
-    def ensure_ready() -> bool:
+    def ensure_ready(silent: bool = False) -> bool:
         _, _, site_dir, _ = _mandrelib_get_pip_dirs()
         _mandrelib_ensure_site_on_path(site_dir)
         ok = _mandrelib_bootstrap_pip()
         try:
-            if ok:
-                BulletinHelper.show_success("MandreLib: pip готов", get_last_fragment())
-            else:
-                BulletinHelper.show_error("MandreLib: не удалось инициализировать pip", get_last_fragment())
+            if not silent:
+                if ok:
+                    BulletinHelper.show_success("MandreLib: pip готов", get_last_fragment())
+                else:
+                    BulletinHelper.show_error("MandreLib: не удалось инициализировать pip", get_last_fragment())
         except Exception:
             pass
         return ok
@@ -344,34 +346,60 @@ class MandrePip:
 
     @staticmethod
     def import_module(mod: str):
-        _ = MandrePip.ensure_ready()
+        _ = MandrePip.ensure_ready(silent=True)
         _mandrelib_ensure_site_on_path(MandrePip.site_dir())
         return __import__(mod)
 
 class MandreInstall:
-    """Tiny helper to install one or many none-any packages with a single call.
-    Usage: MandreInstall(["pyrogram", "typing_extensions"]).
     """
-    def __init__(self, specs):
+    Unified Installer and Status Checker.
+    Usage:
+      - Check status:  MandreInstall('check_status') -> bool
+      - Install lib:   MandreInstall('requests')
+      - Install file:  MandreInstall('http://site.com/lib.whl')
+      - Multi install: MandreInstall(['lib1', 'lib2'])
+    """
+    def __new__(cls, target):
+        # 1. Check Status Logic
+        if target == "check_status":
+            # Returns True if PIP is ready/bootstrapped, False otherwise
+            # Silent mode avoids UI popup during check
+            return MandrePip.ensure_ready(silent=True)
+
+        # 2. Install Logic
         try:
-            if isinstance(specs, (list, tuple)):
-                for s in specs:
-                    try:
-                        MandrePip.import_module(s)
-                        continue
-                    except Exception:
-                        pass
-                    try:
-                        MandrePip.install(str(s))
-                    except Exception:
-                        pass
-            elif isinstance(specs, str):
-                try:
-                    MandrePip.import_module(specs)
-                except Exception:
-                    MandrePip.install(specs)
+            # Ensure bootstrap before trying to install
+            if not MandrePip.ensure_ready(silent=True):
+                log("[MandreInstall] Cannot install: PIP not ready.")
+                return None
+
+            if isinstance(target, (list, tuple)):
+                for s in target:
+                    MandreInstall._install_one(s)
+            else:
+                MandreInstall._install_one(target)
+        except Exception as e:
+            log(f"[MandreInstall] Error: {e}")
+        
+        return None
+
+    @staticmethod
+    def _install_one(spec):
+        try:
+            # Try to import first to skip installation
+            spec_str = str(spec)
+            # Crude check: if it looks like a url or path, don't try to import as module name
+            if not spec_str.endswith(".whl") and "://" not in spec_str and "/" not in spec_str:
+                 MandrePip.import_module(spec_str)
+                 return
         except Exception:
             pass
+        
+        # Proceed to install
+        try:
+            MandrePip.install(str(spec))
+        except Exception as e:
+            log(f"[MandreInstall] Install failed for {spec}: {e}")
 
 class MandreWeb:
     @staticmethod
@@ -2020,8 +2048,8 @@ class Mandre:
     Share = MandreShare
     Device = MandreDevice
     Notification = MandreNotification
-    Pip = MandrePip
     Settings = MandreSettings
+    # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
 
     _DB_CACHE_STORAGE = None
     _DB_CACHE_DB = None
