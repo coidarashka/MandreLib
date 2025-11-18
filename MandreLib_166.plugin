@@ -26,10 +26,10 @@
 #   ( o.o )
 #    > ^ <
 # Этот котик проверил код, и он идеален. Мяу!
-# кангелочек Я И ЕСТЬ ИНТЕРНЕТ АНГЕЛ УВЕРЯЮ...... кангел это чеп такое? братан я ввижу внизу кастыль n\n\  а не проще просто """  текст """  ?!?!?
+# Переписана система локализации: удален старый мусор, добавлена поддержка TARGETlang и авто-рефреш.
 __id__ = "mandre_lib"
 __name__ = "MandreLib"
-__version__ = "1.6.6"
+__version__ = "1.6.7" 
 __author__ = """MandreAI & СвагаНеТута
 @swagnonher & @MandreAI_bot"""
 __description__ = "Бибилотека для создания плагинов \n\n Документация: https://manderelib.vercel.app/"
@@ -126,7 +126,7 @@ _COMMAND_LOCK = threading.Lock()
 _COMMANDS = {}
 _mandrelib_instance = None
 
-_LOCALIZATIONS = {}
+# Старая переменная _LOCALIZATIONS удалена. Используем только кэш.
 _LOCALIZATION_CACHE = {}
 
 FILE_PICK_REQUEST_CODE = 42069
@@ -999,14 +999,6 @@ class MandreDevice:
 class MandreSettings:
     """
     HTML‑подобный билдер настроек для плагинов.
-    Описывайте экраны через простые теги, которые конвертируются
-    в элементы `ui.settings`.
-    
-    Пример:
-    <header text="Demo Settings"/>
-    <switch key="enabled" text="Включить" default="auto" icon="switch"/>
-    <input key="username" text="Имя" icon="msg_edit"/>
-    <selector key="theme" text="Тема" items="Светлая,Тёмная,Системная" default="auto" icon="msg_night"/>
     """
 
     @staticmethod
@@ -1025,6 +1017,7 @@ class MandreSettings:
             try:
                 strings_to_translate = MandreSettings._collect_strings_for_translation(elements)
                 if strings_to_translate:
+                    # Запускаем в фоне, чтобы не фризить рендер, если перевод нужен
                     run_on_queue(lambda: Mandre.auto_translate_inline_strings(plugin, strings_to_translate))
             except Exception:
                 log(f"[MandreSettings] auto-translate prepare error: {traceback.format_exc()}")
@@ -1210,11 +1203,6 @@ class MandreSettings:
 
     @staticmethod
     def add_chat_preview(plugin: BasePlugin, messages: List[Dict[str, Any]]):
-        """Register a Telegram-style chat preview block for the given plugin.
-        Usage:
-            Mandre.use_persistent_storage(self)
-            Mandre.Settings.add_chat_preview(self, SAMPLE_MESSAGES)
-        """
         try:
             pid = getattr(plugin, 'id', None) or getattr(plugin, 'getId', lambda: None)()
             if not pid:
@@ -2255,10 +2243,25 @@ class Mandre:
         try:
             plugin_id = plugin_instance.id
             user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
+            
+            # 1. Проверка TARGETlang в плагине
+            target_lang_override = getattr(plugin_instance, "TARGETlang", None)
+            if target_lang_override:
+                target_lang_override = str(target_lang_override).strip().lower()
+                # Если язык плагина совпадает с языком пользователя - перевод не нужен.
+                if target_lang_override == user_lang:
+                    return
+
             cache_key = f"{plugin_id}_{user_lang}"
-            cache = _LOCALIZATION_CACHE.get(cache_key)
-            if cache is None:
-                cache = {}
+            
+            # Загрузка кэша с диска, если в памяти пусто
+            if cache_key not in _LOCALIZATION_CACHE:
+                disk_cache = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json", {})
+                if disk_cache:
+                    _LOCALIZATION_CACHE[cache_key] = disk_cache
+
+            cache = _LOCALIZATION_CACHE.get(cache_key, {})
+            if cache_key not in _LOCALIZATION_CACHE:
                 _LOCALIZATION_CACHE[cache_key] = cache
 
             # Уникализируем и отфильтруем уже переведенные
@@ -2277,6 +2280,7 @@ class Mandre:
             if not to_translate:
                 return
 
+            # Вызов AI. Если TARGETlang не задан, AI определит исходный язык сам.
             translated_values_str = Mandre._call_pollinations_api_for_json(to_translate, user_lang)
             if not translated_values_str:
                 log(f"[MandreLib AutoLoc] Не удалось получить inline переводы для {plugin_id} на {user_lang}")
@@ -2290,20 +2294,24 @@ class Mandre:
             for original, translated in zip(to_translate, translated_values):
                 cache[original] = translated
 
-            # Сохраняем в persistent JSON, объединяя с существующим
-            # Готовим каталог locales заранее (иначе запись может упасть)
+            # Сохраняем в persistent JSON
             try:
                 base_dir = MandreData._get_base_data_dir().getAbsolutePath()
                 locale_dir_path = os.path.join(base_dir, plugin_id, "locales")
                 os.makedirs(locale_dir_path, exist_ok=True)
             except Exception:
                 pass
+            
             existing = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json")
             if not isinstance(existing, dict):
                 existing = {}
             existing.update(cache)
             MandreData.write_persistent_json(plugin_id, f"locales/{user_lang}.json", existing)
             log(f"[MandreLib AutoLoc] Inline переводов добавлено для {plugin_id} на {user_lang}: {len(to_translate)}")
+            
+            # САМОЕ ГЛАВНОЕ: Перезагружаем настройки, чтобы перевод применился сразу
+            run_on_ui_thread(lambda: Mandre.apply_and_refresh_settings(plugin_instance))
+
         except Exception:
             log(f"[MandreLib AutoLoc] Ошибка в auto_translate_inline_strings: {traceback.format_exc()}")
 
@@ -2387,89 +2395,22 @@ class Mandre:
         plugin_id = plugin_instance.id
         user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
         
+        # Проверяем кэш в памяти (он заполняется через auto_translate или загрузку с диска)
         cache_key = f"{plugin_id}_{user_lang}"
+        
+        if cache_key not in _LOCALIZATION_CACHE:
+             # Пытаемся лениво загрузить с диска, если еще не загружено
+            disk_cache = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json", {})
+            if disk_cache:
+                _LOCALIZATION_CACHE[cache_key] = disk_cache
+        
         if cache_key in _LOCALIZATION_CACHE:
             translated_text = _LOCALIZATION_CACHE[cache_key].get(key)
             if translated_text:
                 return translated_text.format(**kwargs) if kwargs else translated_text
 
-        original_translations = _LOCALIZATIONS.get(plugin_id)
-        if original_translations:
-            original_text = original_translations.get(key, key)
-            return original_text.format(**kwargs) if kwargs else original_text
-
+        # Если перевода нет, возвращаем оригинал
         return key.format(**kwargs) if kwargs else key
-        
-    @staticmethod
-    def register_localizations(plugin_instance: BasePlugin, source_lang: str, translations: Dict[str, str]):
-        plugin_id = plugin_instance.id
-        _LOCALIZATIONS[plugin_id] = translations
-        
-        user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
-        
-        cache_key = f"{plugin_id}_{user_lang}"
-        if cache_key not in _LOCALIZATION_CACHE:
-            cached_translation = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json")
-            if cached_translation:
-                _LOCALIZATION_CACHE[cache_key] = cached_translation
-                log(f"[MandreLib AutoLoc] Загружен кэш локализации для {plugin_id} на {user_lang}.")
-
-        if user_lang == source_lang:
-            log(f"[MandreLib AutoLoc] Язык пользователя ({user_lang}) совпадает с языком плагина {plugin_id}. Перевод не требуется.")
-            return
-        
-        offered_key = f"localization_offered_{plugin_id}_{user_lang}"
-        if _mandrelib_instance and _mandrelib_instance.get_setting(offered_key, False):
-            log(f"[MandreLib AutoLoc] Локализация для {plugin_id} на {user_lang} уже предлагалась.")
-            return
-            
-        def start_flow():
-            run_on_ui_thread(lambda: BulletinHelper.show_info(f"Обнаружен плагин {plugin_instance.name}. Предлагаю перевод на ваш язык..."))
-            run_on_queue(lambda: Mandre._translation_worker(plugin_instance, user_lang, source_lang))
-
-        threading.Timer(5.0, start_flow).start()
-
-    @staticmethod
-    def _translation_worker(plugin_instance, user_lang, source_lang):
-        try:
-            plugin_id = plugin_instance.id
-            translations = _LOCALIZATIONS.get(plugin_id)
-            if not translations:
-                log(f"[MandreLib AutoLoc] Нет словаря для перевода плагина {plugin_id}.")
-                return
-
-            log(f"[MandreLib AutoLoc] Начало процесса перевода для {plugin_id} с {source_lang} на {user_lang}")
-            
-            values_to_translate = list(translations.values())
-            translated_values_str = Mandre._call_pollinations_api_for_json(values_to_translate, user_lang)
-            
-            if not translated_values_str:
-                log(f"[MandreLib AutoLoc] Не удалось получить перевод.")
-                run_on_ui_thread(lambda: BulletinHelper.show_error("Ошибка перевода. Попробуйте позже."))
-                return
-
-            translated_values = json.loads(translated_values_str)
-            if len(translated_values) != len(translations):
-                 log(f"[MandreLib AutoLoc] Несоответствие количества переведенных строк.")
-                 run_on_ui_thread(lambda: BulletinHelper.show_error("Ошибка формата перевода."))
-                 return
-            
-            translated_dict = dict(zip(translations.keys(), translated_values))
-            
-            locale_dir_path = os.path.join(MandreData._get_base_data_dir().getAbsolutePath(), plugin_id, "locales")
-            os.makedirs(locale_dir_path, exist_ok=True)
-            
-            MandreData.write_persistent_json(plugin_id, f"locales/{user_lang}.json", translated_dict)
-            _LOCALIZATION_CACHE[f"{plugin_id}_{user_lang}"] = translated_dict
-            log(f"[MandreLib AutoLoc] Локализация для {plugin_id} на {user_lang} сохранена.")
-            
-            if _mandrelib_instance:
-                _mandrelib_instance.set_setting(f"localization_offered_{plugin_id}_{user_lang}", True)
-                run_on_ui_thread(lambda: BulletinHelper.show_success("Перевод готов! Перезапустите плагин или приложение для применения."))
-
-        except Exception:
-            log(f"[MandreLib AutoLoc] Ошибка в translation_worker: {traceback.format_exc()}")
-            run_on_ui_thread(lambda: BulletinHelper.show_error("Произошла ошибка во время перевода."))
     
     @staticmethod
     def _call_pollinations_api_for_json(values: List[str], target_lang: str) -> Optional[str]:
@@ -2479,6 +2420,7 @@ class Mandre:
             
             prompt = (
                 f"You are a translation assistant. Translate the following JSON array of strings into {lang_name}. "
+                f"Detect the source language automatically. "
                 f"Your response must be ONLY a valid JSON array containing the translated strings in the exact same order. "
                 f"Do not add any explanations, markdown, or other text outside of the JSON array. "
                 f"Original JSON array:\n\n{json_to_translate}"
