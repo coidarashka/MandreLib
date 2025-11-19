@@ -119,6 +119,10 @@ _DATA_LOCK = threading.Lock()
 _PERSISTENT_PLUGINS = set()
 _RESTORING_PLUGINS = set()
 
+# --- Глобальные переменные для Suggestions ---
+_SUGGESTIONS_REGISTRY = {}
+_suggestions_hook_installed = False
+
 _BOTTOM_BAR_CONFIGS = {}
 _bottom_bar_hooks_installed = False
 
@@ -2028,6 +2032,169 @@ class MandreUI:
         except Exception:
             log(f"[MandreLib] Не удалось установить хуки для BottomBar: {traceback.format_exc()}")
 
+class MandreSuggestions:
+    """
+    Модуль для создания кастомных меню автодополнения (как при вводе @ или /).
+    Использует HTML-like DSL.
+    """
+    
+    @staticmethod
+    def register(plugin_instance: BasePlugin, trigger: str, content: Any):
+        """
+        Регистрирует триггер для меню.
+        :param trigger: Текст, при вводе которого появится меню (например, "#myui", "//tools").
+        :param content: Строка с DSL или функция, возвращающая строку DSL.
+                        DSL формат: <item text="Title" subtext="Description" />
+        """
+        _SUGGESTIONS_REGISTRY[trigger.lower()] = content
+        MandreSuggestions._ensure_hook(plugin_instance)
+        log(f"[MandreSuggestions] Зарегистрирован триггер '{trigger}' для {plugin_instance.id}")
+
+    @staticmethod
+    def trigger_input(text: str):
+        """Программно вставляет текст в поле ввода, вызывая меню (если триггер совпадает)."""
+        run_on_ui_thread(lambda: MandreSuggestions._inject_text(text))
+
+    @staticmethod
+    def _inject_text(text: str):
+        try:
+            fragment = get_last_fragment()
+            if hasattr(fragment, "getChatActivityEnterView"):
+                enter_view = fragment.getChatActivityEnterView()
+                field = enter_view.getEditField() if enter_view else None
+                if field:
+                    field.setText(text)
+                    field.setSelection(len(text))
+        except Exception: pass
+
+    @staticmethod
+    def _parse_dsl(dsl_string: str) -> tuple:
+        """Парсит DSL и возвращает (titles, descriptions)."""
+        titles = []
+        descriptions = []
+        # Simple regex parsing for speed
+        # Matches <item ... /> or <cmd ... /> or <s ... />
+        # Attrs: text/t/value/command -> Title
+        #        subtext/d/desc/help -> Description
+        pattern = re.compile(r'<(?:\w+)\s+([^>]+?)\s*/?>')
+        attr_pattern = re.compile(r'([a-zA-Z0-9_]+)\s*=\s*["\']([^"\']+)["\']')
+        
+        for match in pattern.finditer(dsl_string):
+            attrs_str = match.group(1)
+            attrs = dict(attr_pattern.findall(attrs_str))
+            
+            # Resolve title
+            title = attrs.get("text") or attrs.get("t") or attrs.get("value") or attrs.get("command") or "Item"
+            
+            # Resolve description
+            desc = attrs.get("subtext") or attrs.get("d") or attrs.get("desc") or attrs.get("help") or "MandreLib"
+            
+            titles.append(title)
+            descriptions.append(desc)
+            
+        return titles, descriptions
+
+    class _Hook(MethodHook):
+        def before_hooked_method(self, param):
+            try:
+                # Аргументы: (CharSequence text, int position, ArrayList messages, boolean username, boolean hashtag)
+                if not param.args or param.args[0] is None: return
+                
+                text = str(param.args[0].toString())
+                if not text: return
+
+                # Ищем совпадение по триггеру
+                matched_trigger = None
+                content_source = None
+                
+                for trigger, content in _SUGGESTIONS_REGISTRY.items():
+                    if text.lower().startswith(trigger):
+                        matched_trigger = trigger
+                        content_source = content
+                        break
+                
+                if not matched_trigger: return
+
+                # Получаем DSL
+                dsl = content_source() if callable(content_source) else str(content_source)
+                titles_py, descs_py = MandreSuggestions._parse_dsl(dsl)
+                
+                if not titles_py: return
+
+                # Инъекция в адаптер
+                adapter = param.thisObject
+                
+                # Reflection magic (как в list_of_commands.py)
+                cls = adapter.getClass()
+                f_cmds = cls.getDeclaredField("searchResultCommands")
+                f_help = cls.getDeclaredField("searchResultCommandsHelp")
+                f_delegate = cls.getDeclaredField("delegate")
+                
+                f_cmds.setAccessible(True)
+                f_help.setAccessible(True)
+                f_delegate.setAccessible(True)
+                
+                # Конвертация в Java ArrayList
+                StringClass = find_class("java.lang.String")
+                from java.util import Arrays
+                
+                # Создаем Java массив строк
+                def to_jlist(pylist):
+                    arr = java.lang.reflect.Array.newInstance(StringClass, len(pylist))
+                    for i, v in enumerate(pylist):
+                        arr[i] = v
+                    return ArrayList(Arrays.asList(arr))
+
+                # Используем упрощенный метод, если jython позволяет, иначе через рефлексию выше
+                # Но надежнее так:
+                j_titles = ArrayList()
+                j_descs = ArrayList()
+                for t in titles_py: j_titles.add(str(t))
+                for d in descs_py: j_descs.add(str(d))
+
+                f_cmds.set(adapter, j_titles)
+                f_help.set(adapter, j_descs)
+                
+                # Обновляем UI
+                def ui_update():
+                    adapter.notifyDataSetChanged()
+                    delegate = f_delegate.get(adapter)
+                    if delegate:
+                        # needChangePanelVisibility(boolean show)
+                        delegate.needChangePanelVisibility(True)
+                
+                run_on_ui_thread(ui_update)
+                
+                # Блокируем оригинальный поиск Telegram
+                param.setResult(None)
+                
+            except Exception as e:
+                log(f"[MandreSuggestions] Hook error: {e}")
+
+    @staticmethod
+    def _ensure_hook(plugin_instance):
+        global _suggestions_hook_installed
+        if _suggestions_hook_installed: return
+        
+        try:
+            MentionsAdapter = find_class("org.telegram.ui.Adapters.MentionsAdapter")
+            CharSequence = find_class("java.lang.CharSequence")
+            Integer = find_class("java.lang.Integer")
+            ArrayList = find_class("java.util.ArrayList")
+            Boolean = find_class("java.lang.Boolean")
+            
+            # searchUsernameOrHashtag(CharSequence text, int position, ArrayList messages, boolean username, boolean hashtag)
+            method = MentionsAdapter.getClass().getDeclaredMethod(
+                "searchUsernameOrHashtag", 
+                CharSequence, Integer.TYPE, ArrayList, Boolean.TYPE, Boolean.TYPE
+            )
+            
+            plugin_instance.hook_method(method, MandreSuggestions._Hook())
+            _suggestions_hook_installed = True
+            log("[MandreSuggestions] Хук успешно установлен.")
+        except Exception as e:
+            log(f"[MandreSuggestions] Не удалось установить хук: {e}")
+
 class Mandre:
     UI = MandreUI
     Data = MandreData
@@ -2037,6 +2204,7 @@ class Mandre:
     Device = MandreDevice
     Notification = MandreNotification
     Settings = MandreSettings
+    Suggestions = MandreSuggestions
     # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
 
     _DB_CACHE_STORAGE = None
