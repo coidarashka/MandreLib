@@ -1,0 +1,424 @@
+# MandreLib API Documentation
+# Format: TOML
+# Source: MandreLib_1i7.py
+# Version: 1.7
+
+[library]
+name = "MandreLib"
+version = "1.7"
+description = "Полная документация API для разработчиков плагинов exteraGram."
+
+# ==========================================================
+# MAIN NAMESPACE (Class Mandre)
+# ==========================================================
+[modules.Mandre]
+description = "Главный класс-фасад. Содержит ссылки на все подмодули (Mandre.UI, Mandre.Data и т.д.) и методы управления жизненным циклом."
+
+[[modules.Mandre.methods]]
+name = "use_persistent_storage"
+args = ["plugin_instance"]
+returns = "None"
+description = "Перехватывает метод set_setting плагина для автоматического сохранения настроек в JSON файл config.json."
+
+[[modules.Mandre.methods]]
+name = "schedule_task"
+args = ["plugin_instance", "task_name: str", "interval_seconds: int", "callback: callable"]
+returns = "None"
+description = "Регистрирует задачу, которая будет выполняться циклически с заданным интервалом."
+
+[[modules.Mandre.methods]]
+name = "cancel_task"
+args = ["plugin_instance", "task_name: str"]
+returns = "None"
+description = "Отменяет ранее запланированную задачу и останавливает планировщик, если задач больше нет."
+
+[[modules.Mandre.methods]]
+name = "register_command"
+args = ["plugin_instance", "command_name: str", "callback: callable"]
+returns = "None"
+description = "Регистрирует текстовую команду (например, '.help'), срабатывающую при отправке сообщения."
+
+[[modules.Mandre.methods]]
+name = "handle_outgoing_command"
+args = ["params"]
+returns = "HookResult | None"
+description = "Метод для использования внутри хука on_send_message. Обрабатывает зарегистрированные команды."
+
+[[modules.Mandre.methods]]
+name = "add_tg_alias"
+args = ["path: str", "callback: callable(Intent)"]
+returns = "None"
+description = "Регистрирует обработчик deep-link ссылок вида tg://<path>."
+
+[[modules.Mandre.methods]]
+name = "remove_tg_alias"
+args = ["path: str"]
+returns = "None"
+description = "Удаляет зарегистрированный tg:// алиас."
+
+[[modules.Mandre.methods]]
+name = "register_settings_alias"
+args = ["plugin_instance"]
+returns = "None"
+description = "Автоматически создает алиас tg://<plugin_id> для быстрого открытия настроек плагина."
+
+[[modules.Mandre.methods]]
+name = "remove_settings_alias"
+args = ["plugin_instance"]
+returns = "None"
+description = "Удаляет автоматический алиас настроек."
+
+[[modules.Mandre.methods]]
+name = "apply_and_refresh_settings"
+args = ["plugin_instance"]
+returns = "None"
+description = "Принудительно обновляет UI экрана настроек (полезно при динамической смене параметров)."
+
+[[modules.Mandre.methods]]
+name = "t"
+args = ["plugin_instance", "key: str", "**kwargs"]
+returns = "str"
+description = "Возвращает локализованную строку из кэша. Если перевода нет, возвращает ключ. Поддерживает .format(**kwargs)."
+
+[[modules.Mandre.methods]]
+name = "auto_translate_inline_strings"
+args = ["plugin_instance", "strings_list: list[str]"]
+returns = "None"
+description = "Запускает фоновый процесс перевода списка строк через AI на язык пользователя."
+
+[[modules.Mandre.methods]]
+name = "register_synthetic_channel"
+args = ["channel_id: int", "title: str", "megagroup: bool = False", "broadcast: bool = True"]
+returns = "TLRPC.Chat | None"
+description = "Создает или обновляет 'виртуальный' чат в MessagesController без обращения к серверу."
+
+# --- SQL Helpers (MessagesStorage) ---
+
+[[modules.Mandre.methods]]
+name = "sql_get_database"
+returns = "SQLiteDatabase (Native)"
+description = "Возвращает прямой доступ к объекту базы данных Telegram (MessagesStorage)."
+
+[[modules.Mandre.methods]]
+name = "sql_init_kv"
+args = ["plugin_id", "table_name='mandre_kv'"]
+returns = "None"
+description = "Создает таблицу для хранения пар ключ-значение в SQLite, если она не существует."
+
+[[modules.Mandre.methods]]
+name = "sql_kv_set"
+args = ["plugin_id", "key", "value", "table_name='mandre_kv'"]
+returns = "None"
+description = "Сохраняет или обновляет значение в SQL KV таблице."
+
+[[modules.Mandre.methods]]
+name = "sql_kv_get"
+args = ["plugin_id", "key", "table_name='mandre_kv'"]
+returns = "str | None"
+description = "Получает строковое значение из SQL KV таблицы."
+
+[[modules.Mandre.methods]]
+name = "sql_kv_get_int"
+args = ["plugin_id", "key", "default=0", "table_name='mandre_kv'"]
+returns = "int"
+description = "Получает целочисленное значение из SQL KV таблицы."
+
+[[modules.Mandre.methods]]
+name = "sql_kv_delete_prefix"
+args = ["plugin_id", "prefix", "table_name='mandre_kv'"]
+returns = "None"
+description = "Удаляет все записи, ключи которых начинаются с заданного префикса."
+
+
+# ==========================================================
+# FILE SYSTEM (Class MandreData)
+# ==========================================================
+[modules.MandreData]
+description = "Работа с файловой системой и персистентными данными."
+
+[[modules.MandreData.methods]]
+name = "write_persistent_json"
+args = ["plugin_id", "filename", "data"]
+returns = "None"
+description = "Записывает данные в JSON файл в папке плагина."
+
+[[modules.MandreData.methods]]
+name = "read_persistent_json"
+args = ["plugin_id", "filename", "default=None"]
+returns = "Any"
+description = "Читает данные из JSON файла."
+
+[[modules.MandreData.methods]]
+name = "get_persistent_path"
+args = ["plugin_id", "filename"]
+returns = "str"
+description = "Возвращает абсолютный путь к файлу в хранилище плагина."
+
+[[modules.MandreData.methods]]
+name = "list_persistent_plugins"
+returns = "list[str]"
+description = "Возвращает список ID плагинов, которые имеют сохраненные данные."
+
+[[modules.MandreData.methods]]
+name = "list_files_for_plugin"
+args = ["plugin_id"]
+returns = "list[str]"
+description = "Возвращает список файлов в папке данных конкретного плагина."
+
+[[modules.MandreData.methods]]
+name = "delete_persistent_plugin_data"
+args = ["plugin_id"]
+returns = "bool"
+description = "Полностью удаляет директорию с данными указанного плагина."
+
+
+# ==========================================================
+# UI COMPONENTS (Class MandreUI)
+# ==========================================================
+[modules.MandreUI]
+description = "Инструменты для создания пользовательского интерфейса."
+
+[[modules.MandreUI.methods]]
+name = "show"
+args = ["title: str", "items: list[str]", "on_select: callable(index, text)", "message: str = None", "cancel_text: str = 'Отмена'"]
+returns = "None"
+description = "Показывает AlertDialog со списком опций."
+
+[[modules.MandreUI.methods]]
+name = "select_chat"
+args = ["title: str", "on_select: callable(chat_info)", "search_hint: str", "cancel_text: str"]
+returns = "None"
+description = "Показывает полноэкранный интерфейс для поиска и выбора чата/пользователя."
+
+[[modules.MandreUI.methods]]
+name = "ripple"
+args = ["intensity: float = 2.0", "vibrate: bool = True"]
+returns = "None"
+description = "Вызывает системный эффект ряби (Ripple) и вибрацию."
+
+[[modules.MandreUI.methods]]
+name = "setup_settings_bottom_bar"
+args = ["plugin_instance", "items: list[dict]", "active_index_key='active_tab'", "bg_color", "active_color", "inactive_color", "active_bg_color", "stroke_color", "stroke_width_dp", "corner_radius_dp"]
+returns = "None"
+description = "Встраивает навигационную панель (BottomBar) в нижнюю часть экрана настроек плагина."
+
+[[modules.MandreUI.methods]]
+name = "update_bottom_bar"
+args = ["plugin_id", "active_index: int"]
+returns = "None"
+description = "Программно обновляет активную вкладку в BottomBar."
+
+[[modules.MandreUI.methods]]
+name = "show_bottom_sheet"
+args = ["plugin_instance", "dsl: str", "callbacks: dict"]
+returns = "None"
+description = "Показывает BottomSheet, сверстанный с помощью XML-DSL разметки."
+
+
+# ==========================================================
+# INSTALLER (Class MandreInstall)
+# ==========================================================
+[modules.MandreInstall]
+description = "Высокоуровневый интерфейс для установки Python пакетов. Используется как вызов класса."
+
+[[modules.MandreInstall.usage]]
+example = "MandreInstall('requests') # Установка"
+
+[[modules.MandreInstall.methods]]
+name = "__new__"
+args = ["target"]
+description = "Если target='check_status', возвращает bool. Иначе устанавливает пакет/список пакетов/ссылку .whl."
+
+
+# ==========================================================
+# PIP LOW-LEVEL (Class MandrePip)
+# ==========================================================
+[modules.MandrePip]
+description = "Низкоуровневые методы работы с pip."
+
+[[modules.MandrePip.methods]]
+name = "ensure_ready"
+args = ["silent: bool = False"]
+returns = "bool"
+description = "Инициализирует среду pip (распаковывает wheels), если это еще не сделано."
+
+[[modules.MandrePip.methods]]
+name = "pip"
+args = ["args: list|str"]
+returns = "tuple(code, out, err)"
+description = "Выполняет произвольную команду pip. Пример: pip(['list'])."
+
+[[modules.MandrePip.methods]]
+name = "install"
+args = ["spec: str"]
+returns = "tuple"
+description = "Устанавливает пакет по спецификации."
+
+[[modules.MandrePip.methods]]
+name = "site_dir"
+returns = "str"
+description = "Возвращает абсолютный путь к папке site-packages."
+
+[[modules.MandrePip.methods]]
+name = "import_module"
+args = ["mod: str"]
+returns = "module"
+description = "Импортирует модуль, предварительно добавив site-packages в sys.path."
+
+
+# ==========================================================
+# SHARING (Class MandreShare)
+# ==========================================================
+[modules.MandreShare]
+description = "Отправка контента в другие приложения (Intent Action Send)."
+
+[[modules.MandreShare.methods]]
+name = "share_text"
+args = ["text: str", "title: str = 'Поделиться'"]
+returns = "None"
+description = "Открывает системное меню 'Поделиться' для текста."
+
+[[modules.MandreShare.methods]]
+name = "share_file"
+args = ["file_path: str", "title: str = 'Поделиться файлом'", "mime_type: str = None"]
+returns = "None"
+description = "Копирует файл во временную папку и открывает системное меню 'Поделиться'."
+
+
+# ==========================================================
+# NOTIFICATIONS (Class MandreNotification)
+# ==========================================================
+[modules.MandreNotification]
+description = "Системные Android уведомления."
+
+[[modules.MandreNotification.methods]]
+name = "show_simple"
+args = ["title: str", "text: str", "channel_id: str"]
+returns = "None"
+description = "Показывает стандартное текстовое уведомление."
+
+[[modules.MandreNotification.methods]]
+name = "show_dialog"
+args = ["sender_name: str", "message: str", "avatar_url: str", "channel_id: str"]
+returns = "None"
+description = "Показывает уведомление в стиле мессенджера (MessagingStyle) с аватаром."
+
+
+# ==========================================================
+# DEVICE INFO (Class MandreDevice)
+# ==========================================================
+[modules.MandreDevice]
+description = "Информация об устройстве."
+
+[[modules.MandreDevice.methods]]
+name = "get_device_info"
+returns = "dict"
+description = "Возвращает полный словарь с характеристиками (CPU, RAM, Model, Android, Root и т.д.)."
+
+[[modules.MandreDevice.methods]]
+name = "get_simple_info"
+returns = "str"
+description = "Возвращает краткую строку описания устройства."
+
+
+# ==========================================================
+# SETTINGS DSL (Class MandreSettings)
+# ==========================================================
+[modules.MandreSettings]
+description = "Парсер настроек."
+
+[[modules.MandreSettings.methods]]
+name = "render"
+args = ["plugin: BasePlugin", "spec: str|list|dict"]
+returns = "list"
+description = "Преобразует XML-строку или структуру данных в список элементов настроек."
+
+[[modules.MandreSettings.methods]]
+name = "add_chat_preview"
+args = ["plugin: BasePlugin", "messages: list[dict]"]
+returns = "None"
+description = "Вставляет в настройки визуальное превью чата."
+
+
+# ==========================================================
+# SUGGESTIONS (Class MandreSuggestions)
+# ==========================================================
+[modules.MandreSuggestions]
+description = "Кастомные меню автодополнения при вводе текста."
+
+[[modules.MandreSuggestions.methods]]
+name = "register"
+args = ["plugin_instance", "trigger: str", "content: str|callable"]
+returns = "None"
+description = "Регистрирует триггер (напр. '#код') и контент (DSL) для меню."
+
+[[modules.MandreSuggestions.methods]]
+name = "trigger_input"
+args = ["text: str"]
+returns = "None"
+description = "Вставляет текст в поле ввода сообщения."
+
+
+# ==========================================================
+# MESSAGES (Class MandreMessages)
+# ==========================================================
+[modules.MandreMessages]
+description = "Работа с сообщениями."
+
+[[modules.MandreMessages.methods]]
+name = "get_local"
+args = ["dialog_id: int", "limit: int = 100"]
+returns = "list[TLRPC.Message]"
+description = "Получает сообщения напрямую из локальной базы данных (без API запроса)."
+
+
+# ==========================================================
+# WEB RENDERING (Class MandreWeb)
+# ==========================================================
+[modules.MandreWeb]
+description = "Рендеринг веб-контента."
+
+[[modules.MandreWeb.methods]]
+name = "render_html_to_png"
+args = ["html: str", "on_result: callable", "width: int", "height: int", "base_url: str", "capture_delays_ms: list", "bg_color: tuple", "file_prefix: str"]
+returns = "None"
+description = "Рендерит HTML в PNG изображение через скрытый WebView."
+
+
+# ==========================================================
+# TELEGRAM SENDING (Class MandreSend)
+# ==========================================================
+[modules.MandreSend]
+description = "Отправка медиа в Telegram."
+
+[[modules.MandreSend.methods]]
+name = "png"
+args = ["path: str", "caption: str = None"]
+returns = "None"
+description = "Отправляет локальный PNG файл как фото или документ в текущий открытый чат."
+
+
+# ==========================================================
+# TTS (Class MandreTTS)
+# ==========================================================
+[modules.MandreTTS]
+description = "Text-to-Speech."
+
+[[modules.MandreTTS.methods]]
+name = "speak"
+args = ["text: str"]
+returns = "None"
+description = "Озвучивает текст используя системный движок TTS Android."
+
+
+# ==========================================================
+# AUTHENTICATION (Class MandreAuth)
+# ==========================================================
+[modules.MandreAuth]
+description = "Биометрическая аутентификация."
+
+[[modules.MandreAuth.methods]]
+name = "request"
+args = ["on_success: callable", "on_failure: callable", "title: str", "description: str"]
+returns = "None"
+description = "Вызывает системный экран блокировки (палец/лицо/пин) для подтверждения действия."
