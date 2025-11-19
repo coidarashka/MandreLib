@@ -29,7 +29,7 @@
 # Переписана система локализации: удален старый мусор, добавлена поддержка TARGETlang и авто-рефреш.
 __id__ = "mandre_lib"
 __name__ = "MandreLib"
-__version__ = "1.6.7" 
+__version__ = "1.7" 
 __author__ = """MandreAI & СвагаНеТута
 @swagnonher & @MandreAI_bot"""
 __description__ = "Бибилотека для создания плагинов \n\n Документация: https://manderelib.vercel.app/"
@@ -65,6 +65,8 @@ from org.telegram.tgnet import TLRPC
 from org.telegram.messenger import AndroidUtilities, ApplicationLoader, LocaleController, R
 from org.telegram.ui.Components import AvatarDrawable, BackupImageView, RecyclerListView
 from org.telegram.ui.ActionBar import Theme
+from org.telegram.ui.Components import LayoutHelper
+from org.telegram.ui.ActionBar import BottomSheet, ActionBarPopupWindow
 from android.widget import LinearLayout, EditText, ScrollView, TextView, ImageView, FrameLayout
 from android.view import View, Gravity
 from android.text import TextWatcher, TextUtils
@@ -87,6 +89,7 @@ from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuf
 from android.graphics.drawable import GradientDrawable, ColorDrawable
 from android.animation import ObjectAnimator
 from android.view.animation import DecelerateInterpolator
+from android.util import TypedValue
 
 # --- Новые импорты для TTS, аутентификации и уведомлений ---
 try:
@@ -2032,6 +2035,298 @@ class MandreUI:
         except Exception:
             log(f"[MandreLib] Не удалось установить хуки для BottomBar: {traceback.format_exc()}")
 
+    @staticmethod
+    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None):
+        if callbacks is None: callbacks = {}
+        
+        def runner():
+            try:
+                fragment = get_last_fragment()
+                context = fragment.getParentActivity() if fragment else None
+                if not context: return
+
+                # Парсим DSL
+                data = MandreUI._parse_sheet_dsl(dsl)
+                if not data: return
+
+                sheet = BottomSheet(context, False)
+                
+                # Root Layout
+                root = LinearLayout(context)
+                root.setOrientation(LinearLayout.VERTICAL)
+                root.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(16), AndroidUtilities.dp(20), AndroidUtilities.dp(20))
+                
+                # --- Helper для безопасного получения int размера ---
+                def get_size(item_dict, key, default):
+                    try: return int(item_dict.get(key, default))
+                    except: return default
+
+                # --- 1. Title ---
+                if data.get("title"):
+                    title_tv = TextView(context)
+                    title_tv.setText(str(data["title"]))
+                    # Размер из атрибута title_size или 20 по дефолту
+                    title_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "title_size", 20))
+                    title_tv.setTypeface(AndroidUtilities.bold())
+                    title_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+                    root.addView(title_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+
+                # --- 2. Tags ---
+                if data.get("tags"):
+                    tags_container = LinearLayout(context)
+                    tags_container.setOrientation(LinearLayout.HORIZONTAL)
+                    for tag in data["tags"]:
+                        tag_frame = FrameLayout(context)
+                        bg = GradientDrawable()
+                        bg.setCornerRadius(AndroidUtilities.dp(8))
+                        
+                        # Логика цвета: Текст яркий, Фон прозрачный (12%)
+                        col_str = tag.get("color")
+                        text_color = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
+                        if col_str:
+                            try: text_color = Color.parseColor(col_str)
+                            except: pass
+                        
+                        bg_color = (text_color & 0x00FFFFFF) | 0x20000000
+                        bg.setColor(bg_color)
+                        tag_frame.setBackground(bg)
+                        
+                        tv = TextView(context)
+                        tv.setText(tag.get("text", ""))
+                        # Размер тега (дефолт 12)
+                        tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(tag, "size", 12))
+                        tv.setTypeface(AndroidUtilities.bold())
+                        tv.setTextColor(text_color)
+                        tv.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(4), AndroidUtilities.dp(10), AndroidUtilities.dp(4))
+                        tag_frame.addView(tv)
+                        
+                        tags_container.addView(tag_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 6, 0))
+                    root.addView(tags_container, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 8))
+
+                # --- 3. Subtext ---
+                if data.get("subtext"):
+                    sub_tv = TextView(context)
+                    sub_tv.setText(str(data["subtext"]))
+                    # Размер подтекста (дефолт 13)
+                    sub_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "sub_size", 13))
+                    sub_tv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
+                    root.addView(sub_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+
+                # --- 4. Content ---
+                # Теперь content это словарь, а не строка
+                content_data = data.get("content", {})
+                content_text = content_data.get("text", "")
+                
+                if content_text:
+                    scroll = ScrollView(context)
+                    scroll.setVerticalScrollBarEnabled(False)
+                    content_tv = TextView(context)
+                    content_tv.setText(content_text)
+                    # Размер контента (дефолт 15)
+                    content_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(content_data, "size", 15))
+                    content_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+                    content_tv.setTextIsSelectable(True)
+                    content_tv.setLineSpacing(AndroidUtilities.dp(2), 1.1)
+                    scroll.addView(content_tv)
+                    root.addView(scroll, LayoutHelper.createLinear(-1, 0, 1.0))
+
+                div = View(context)
+                div.setBackgroundColor(Theme.getColor(Theme.key_divider))
+                root.addView(div, LayoutHelper.createLinear(-1, 1, 0, 16, 0, 12))
+
+                # --- 5. Actions ---
+                if data.get("actions"):
+                    actions_row = LinearLayout(context)
+                    actions_row.setOrientation(LinearLayout.HORIZONTAL)
+                    actions_row.setGravity(Gravity.CENTER_VERTICAL)
+                    
+                    for item in data["actions"]:
+                        itype = item.get("type")
+                        
+                        btn_frame = FrameLayout(context)
+                        btn_bg = GradientDrawable()
+                        btn_bg.setCornerRadius(AndroidUtilities.dp(18))
+                        btn_bg.setColor(Theme.getColor(Theme.key_chat_inLoader) & 0x20FFFFFF | 0x10000000)
+                        btn_frame.setBackground(btn_bg)
+                        
+                        content_layout = LinearLayout(context)
+                        content_layout.setOrientation(LinearLayout.HORIZONTAL)
+                        content_layout.setGravity(Gravity.CENTER)
+                        content_layout.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(10), AndroidUtilities.dp(14), AndroidUtilities.dp(10))
+                        
+                        if item.get("icon"):
+                            iv = ImageView(context)
+                            res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
+                            if res_id != 0:
+                                iv.setImageResource(res_id)
+                                iv.setColorFilter(Theme.getColor(Theme.key_dialogTextBlack))
+                                content_layout.addView(iv, LayoutHelper.createLinear(20, 20))
+                        
+                        if item.get("text"):
+                            tv = TextView(context)
+                            tv.setText(item["text"])
+                            # Размер кнопки (дефолт 14)
+                            tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(item, "size", 14))
+                            tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+                            tv.setGravity(Gravity.CENTER)
+                            ml = 6 if item.get("icon") else 0
+                            content_layout.addView(tv, LayoutHelper.createLinear(-2, -2, Gravity.CENTER, ml, 0, 0, 0))
+
+                        btn_frame.addView(content_layout)
+                        
+                        if itype == "button":
+                            cid = item.get("id")
+                            if cid and cid in callbacks:
+                                btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: (sheet.dismiss(), f())))
+                            else:
+                                btn_frame.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
+                        
+                        elif itype == "menu":
+                            menu_items = item.get("items", [])
+                            def show_popup(anchor, items=menu_items):
+                                MandreUI._show_popup_menu(anchor, items, callbacks, sheet)
+                            btn_frame.setOnClickListener(OnClickListener(lambda v: show_popup(v)))
+
+                        actions_row.addView(btn_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 8, 0))
+                    
+                    root.addView(actions_row, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+
+                # --- 6. Close Button ---
+                close_btn = FrameLayout(context)
+                c_bg = GradientDrawable()
+                c_bg.setCornerRadius(AndroidUtilities.dp(10))
+                c_bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText))
+                close_btn.setBackground(c_bg)
+                close_btn.setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12))
+                
+                c_text = TextView(context)
+                c_text.setText(data.get("close_text", "Закрыть"))
+                # Размер кнопки закрытия (дефолт 15)
+                c_text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "close_size", 15))
+                c_text.setTypeface(AndroidUtilities.bold())
+                c_text.setTextColor(Color.WHITE)
+                c_text.setGravity(Gravity.CENTER)
+                close_btn.addView(c_text)
+                
+                close_btn.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
+                root.addView(close_btn, LayoutHelper.createLinear(-1, -2))
+
+                sheet.setCustomView(root)
+                sheet.show()
+            except Exception as e:
+                log(f"[MandreUI] Error showing sheet: {e}")
+                BulletinHelper.show_error(f"UI Error: {e}")
+
+        run_on_ui_thread(runner)
+
+    @staticmethod
+    def _parse_sheet_dsl(dsl: str) -> Dict:
+        try:
+            import re
+            # Root attributes (title_size, sub_size, close_size, close_text etc)
+            root_match = re.search(r'<sheet\s*(.*?)>(.*)</sheet>', dsl, re.DOTALL)
+            if not root_match: return None
+            
+            attrs_str, body = root_match.groups()
+            result = MandreSettings._parse_html(f"<dummy {attrs_str} />")[0]
+            
+            # Tags (with size)
+            result["tags"] = []
+            for m in re.finditer(r'<tag\s*(.*?)/>', body):
+                result["tags"].append(MandreSettings._parse_html(f"<dummy {m.group(1)} />")[0])
+                
+            # Content (Updated to catch attributes like size="18")
+            # Ищем <content attr="...">text</content>
+            c_match = re.search(r'<content\s*(.*?)>(.*?)</content>', body, re.DOTALL)
+            if c_match:
+                c_attrs, c_text = c_match.groups()
+                content_info = MandreSettings._parse_html(f"<dummy {c_attrs} />")[0]
+                content_info["text"] = c_text.strip()
+                result["content"] = content_info
+            else:
+                result["content"] = {"text": ""}
+            
+            # Actions
+            result["actions"] = []
+            actions_body = body
+            a_block = re.search(r'<actions>(.*?)</actions>', body, re.DOTALL)
+            if a_block: actions_body = a_block.group(1)
+            
+            for m in re.finditer(r'<button\s*(.*?)/>', actions_body):
+                btn = MandreSettings._parse_html(f"<dummy {m.group(1)} />")[0]
+                btn["type"] = "button"
+                result["actions"].append(btn)
+                
+            menu_match = re.search(r'<menu\s*(.*?)>(.*?)</menu>', actions_body, re.DOTALL)
+            if menu_match:
+                menu_attrs, menu_body = menu_match.groups()
+                menu = MandreSettings._parse_html(f"<dummy {menu_attrs} />")[0]
+                menu["type"] = "menu"
+                menu["items"] = []
+                for im in re.finditer(r'<item\s*(.*?)/>', menu_body):
+                    it = MandreSettings._parse_html(f"<dummy {im.group(1)} />")[0]
+                    menu["items"].append(it)
+                result["actions"].append(menu)
+                
+            return result
+        except Exception as e:
+            log(f"[MandreUI] DSL Parse Error: {e}")
+            return None
+            
+    @staticmethod
+    def _show_popup_menu(anchor, items, callbacks, sheet):
+        # (Этот метод остается без изменений, но убедитесь, что он присутствует в классе)
+        try:
+            context = anchor.getContext()
+            layout = ActionBarPopupWindow.ActionBarPopupWindowLayout(context)
+            layout.setBackgroundColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuBackground))
+            layout.setFitItems(True)
+            
+            popup = ActionBarPopupWindow(layout, -2, -2)
+            
+            for item in items:
+                frame = FrameLayout(context)
+                frame.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2))
+                frame.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(12), AndroidUtilities.dp(16), AndroidUtilities.dp(12))
+                
+                lin = LinearLayout(context)
+                lin.setOrientation(LinearLayout.HORIZONTAL)
+                lin.setGravity(Gravity.CENTER_VERTICAL)
+                
+                if item.get("icon"):
+                    iv = ImageView(context)
+                    res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
+                    iv.setImageResource(res_id)
+                    iv.setColorFilter(Theme.getColor(Theme.key_actionBarDefaultSubmenuItem))
+                    lin.addView(iv, LayoutHelper.createLinear(24, 24, 0, 0, 12, 0))
+                    
+                tv = TextView(context)
+                tv.setText(item.get("text", ""))
+                tv.setTextColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuItem))
+                # Размер текста в меню тоже можно настроить, если добавить атрибут size в <item>
+                # tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, int(item.get("size", 16)))
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16)
+                lin.addView(tv)
+                
+                frame.addView(lin)
+                
+                cid = item.get("id")
+                def on_click(v, func=callbacks.get(cid)):
+                    popup.dismiss()
+                    if func: 
+                        sheet.dismiss()
+                        func()
+                        
+                frame.setOnClickListener(OnClickListener(on_click))
+                layout.addView(frame, LayoutHelper.createLinear(-1, -2))
+            
+            popup.setOutsideTouchable(True)
+            popup.setFocusable(True)
+            popup.showAsDropDown(anchor, 0, -anchor.getHeight() - AndroidUtilities.dp(10))
+            popup.dimBehind()
+        except Exception as e:
+            log(f"[MandreUI] Popup error: {e}")
+
 class MandreSuggestions:
     """
     Модуль для создания кастомных меню автодополнения (как при вводе @ или /).
@@ -2195,6 +2490,42 @@ class MandreSuggestions:
         except Exception as e:
             log(f"[MandreSuggestions] Не удалось установить хук: {e}")
 
+class MandreMessages:
+    @staticmethod
+    def get_local(dialog_id: int, limit: int = 100) -> List[Any]:
+        """
+        Мгновенно получает сообщения из локальной базы данных (кэша).
+        Не делает запросов в сеть. Возвращает список объектов TLRPC.Message.
+        Usage: msgs = Mandre.Messages.get_local(dialog_id, 50)
+        """
+        messages = []
+        db = Mandre.sql_get_database()
+        if not db: return messages
+        
+        # Читаем сырой BLOB (data), ID сообщения (mid) и дату для точной сортировки
+        query = f"SELECT data, mid, date FROM messages_v2 WHERE uid = {int(dialog_id)} ORDER BY date DESC LIMIT {int(limit)}"
+        cursor = db.queryFinalized(query)
+        
+        try:
+            while cursor.next():
+                data = cursor.byteBufferValue(0) # NativeByteBuffer
+                if data:
+                    # Десериализация TL-объекта из байтов
+                    msg = TLRPC.Message.TLdeserialize(data, data.readInt32(False), False)
+                    if msg:
+                        # Восстанавливаем критичные поля из колонок БД (быстрее и надежнее)
+                        msg.id = cursor.intValue(1)
+                        msg.date = cursor.intValue(2)
+                        msg.dialog_id = int(dialog_id)
+                        messages.append(msg)
+                    data.reuse() # Обязательно освобождаем память NativeByteBuffer
+        except Exception as e:
+            log(f"[MandreMessages] SQL Error: {e}")
+        finally:
+            cursor.dispose() # Закрываем курсор
+            
+        return messages
+
 class Mandre:
     UI = MandreUI
     Data = MandreData
@@ -2205,6 +2536,7 @@ class Mandre:
     Notification = MandreNotification
     Settings = MandreSettings
     Suggestions = MandreSuggestions
+    Messages = MandreMessages
     # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
 
     _DB_CACHE_STORAGE = None
