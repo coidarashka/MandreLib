@@ -2036,8 +2036,9 @@ class MandreUI:
             log(f"[MandreLib] Не удалось установить хуки для BottomBar: {traceback.format_exc()}")
 
     @staticmethod
-    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None):
+    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None, view_creators: Dict[str, Callable] = None):
         if callbacks is None: callbacks = {}
+        if view_creators is None: view_creators = {}
         
         def runner():
             try:
@@ -2056,7 +2057,6 @@ class MandreUI:
                 root.setOrientation(LinearLayout.VERTICAL)
                 root.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(16), AndroidUtilities.dp(20), AndroidUtilities.dp(20))
                 
-                # --- Helper для безопасного получения int размера ---
                 def get_size(item_dict, key, default):
                     try: return int(item_dict.get(key, default))
                     except: return default
@@ -2065,7 +2065,6 @@ class MandreUI:
                 if data.get("title"):
                     title_tv = TextView(context)
                     title_tv.setText(str(data["title"]))
-                    # Размер из атрибута title_size или 20 по дефолту
                     title_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "title_size", 20))
                     title_tv.setTypeface(AndroidUtilities.bold())
                     title_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
@@ -2079,27 +2078,21 @@ class MandreUI:
                         tag_frame = FrameLayout(context)
                         bg = GradientDrawable()
                         bg.setCornerRadius(AndroidUtilities.dp(8))
-                        
-                        # Логика цвета: Текст яркий, Фон прозрачный (12%)
                         col_str = tag.get("color")
                         text_color = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
                         if col_str:
                             try: text_color = Color.parseColor(col_str)
                             except: pass
-                        
                         bg_color = (text_color & 0x00FFFFFF) | 0x20000000
                         bg.setColor(bg_color)
                         tag_frame.setBackground(bg)
-                        
                         tv = TextView(context)
                         tv.setText(tag.get("text", ""))
-                        # Размер тега (дефолт 12)
                         tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(tag, "size", 12))
                         tv.setTypeface(AndroidUtilities.bold())
                         tv.setTextColor(text_color)
                         tv.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(4), AndroidUtilities.dp(10), AndroidUtilities.dp(4))
                         tag_frame.addView(tv)
-                        
                         tags_container.addView(tag_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 6, 0))
                     root.addView(tags_container, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 8))
 
@@ -2107,13 +2100,28 @@ class MandreUI:
                 if data.get("subtext"):
                     sub_tv = TextView(context)
                     sub_tv.setText(str(data["subtext"]))
-                    # Размер подтекста (дефолт 13)
                     sub_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "sub_size", 13))
                     sub_tv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
                     root.addView(sub_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
 
-                # --- 4. Content ---
-                # Теперь content это словарь, а не строка
+                # --- 4.1 Custom View (НОВОЕ!) ---
+                # Вставляем кастомный View, если он есть в DSL и передан creator
+                custom_view_data = data.get("view")
+                if custom_view_data:
+                    vid = custom_view_data.get("id")
+                    if vid and vid in view_creators:
+                        try:
+                            c_view = view_creators[vid](context) # Создаем View
+                            if c_view:
+                                # Устанавливаем высоту, если задана в DSL
+                                height_dp = get_size(custom_view_data, "height", 0)
+                                height_px = AndroidUtilities.dp(height_dp) if height_dp > 0 else -2
+                                root.addView(c_view, LayoutHelper.createLinear(-1, height_px, 0, 0, 0, 12))
+                        except Exception as e:
+                            log(f"[MandreUI] View creation error: {e}")
+
+                # --- 4.2 Content (Text) ---
+                # Старый добрый текст. Если есть и view и текст - текст будет ниже.
                 content_data = data.get("content", {})
                 content_text = content_data.get("text", "")
                 
@@ -2122,12 +2130,13 @@ class MandreUI:
                     scroll.setVerticalScrollBarEnabled(False)
                     content_tv = TextView(context)
                     content_tv.setText(content_text)
-                    # Размер контента (дефолт 15)
                     content_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(content_data, "size", 15))
                     content_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
                     content_tv.setTextIsSelectable(True)
                     content_tv.setLineSpacing(AndroidUtilities.dp(2), 1.1)
                     scroll.addView(content_tv)
+                    # Если есть кастомный вью, тексту даем фиксированную высоту или вес, тут по ситуации.
+                    # Даем вес 1.0, чтобы занимал оставшееся место
                     root.addView(scroll, LayoutHelper.createLinear(-1, 0, 1.0))
 
                 div = View(context)
@@ -2142,7 +2151,6 @@ class MandreUI:
                     
                     for item in data["actions"]:
                         itype = item.get("type")
-                        
                         btn_frame = FrameLayout(context)
                         btn_bg = GradientDrawable()
                         btn_bg.setCornerRadius(AndroidUtilities.dp(18))
@@ -2165,7 +2173,6 @@ class MandreUI:
                         if item.get("text"):
                             tv = TextView(context)
                             tv.setText(item["text"])
-                            # Размер кнопки (дефолт 14)
                             tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(item, "size", 14))
                             tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
                             tv.setGravity(Gravity.CENTER)
@@ -2177,7 +2184,8 @@ class MandreUI:
                         if itype == "button":
                             cid = item.get("id")
                             if cid and cid in callbacks:
-                                btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: (sheet.dismiss(), f())))
+                                # Передаем sheet в колбэк, чтобы можно было его закрыть внутри
+                                btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: f(sheet)))
                             else:
                                 btn_frame.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
                         
@@ -2188,7 +2196,6 @@ class MandreUI:
                             btn_frame.setOnClickListener(OnClickListener(lambda v: show_popup(v)))
 
                         actions_row.addView(btn_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 8, 0))
-                    
                     root.addView(actions_row, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
 
                 # --- 6. Close Button ---
@@ -2198,16 +2205,13 @@ class MandreUI:
                 c_bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText))
                 close_btn.setBackground(c_bg)
                 close_btn.setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12))
-                
                 c_text = TextView(context)
                 c_text.setText(data.get("close_text", "Закрыть"))
-                # Размер кнопки закрытия (дефолт 15)
                 c_text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "close_size", 15))
                 c_text.setTypeface(AndroidUtilities.bold())
                 c_text.setTextColor(Color.WHITE)
                 c_text.setGravity(Gravity.CENTER)
                 close_btn.addView(c_text)
-                
                 close_btn.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
                 root.addView(close_btn, LayoutHelper.createLinear(-1, -2))
 
@@ -2223,29 +2227,31 @@ class MandreUI:
     def _parse_sheet_dsl(dsl: str) -> Dict:
         try:
             import re
-            # Root attributes (title_size, sub_size, close_size, close_text etc)
             root_match = re.search(r'<sheet\s*(.*?)>(.*)</sheet>', dsl, re.DOTALL)
             if not root_match: return None
             
             attrs_str, body = root_match.groups()
             result = MandreSettings._parse_html(f"<dummy {attrs_str} />")[0]
             
-            # Tags (with size)
+            # Tags
             result["tags"] = []
             for m in re.finditer(r'<tag\s*(.*?)/>', body):
                 result["tags"].append(MandreSettings._parse_html(f"<dummy {m.group(1)} />")[0])
-                
-            # Content (Updated to catch attributes like size="18")
-            # Ищем <content attr="...">text</content>
+            
+            # Content (Text)
             c_match = re.search(r'<content\s*(.*?)>(.*?)</content>', body, re.DOTALL)
             if c_match:
                 c_attrs, c_text = c_match.groups()
                 content_info = MandreSettings._parse_html(f"<dummy {c_attrs} />")[0]
                 content_info["text"] = c_text.strip()
                 result["content"] = content_info
-            else:
-                result["content"] = {"text": ""}
             
+            # View (WebView placeholder) - НОВОЕ
+            v_match = re.search(r'<view\s*(.*?)/>', body)
+            if v_match:
+                v_attrs = v_match.group(1)
+                result["view"] = MandreSettings._parse_html(f"<dummy {v_attrs} />")[0]
+
             # Actions
             result["actions"] = []
             actions_body = body
