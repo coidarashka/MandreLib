@@ -87,10 +87,16 @@ from com.exteragram.messenger.plugins import PluginsController
 from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
 from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuffXfermode, Rect, RectF, BitmapFactory
 from android.graphics.drawable import GradientDrawable, ColorDrawable
-from android.animation import ObjectAnimator
+from android.animation import ObjectAnimator, AnimatorSet  # <--- Добавили AnimatorSet
 from android.view.animation import DecelerateInterpolator
 from android.util import TypedValue
 
+try:
+    from android.transition import TransitionManager, TransitionSet, ChangeBounds, Fade, AutoTransition, ChangeTransform, ChangeClipBounds
+    from android.view import ViewGroup
+    from android.view.animation import AccelerateDecelerateInterpolator
+except ImportError:
+    pass
 # --- Новые импорты для TTS, аутентификации и уведомлений ---
 try:
     TextToSpeech = find_class("android.speech.tts.TextToSpeech")
@@ -1743,6 +1749,132 @@ class MandreShare:
         except Exception as e:
             log(f"[MandreLib Share] Ошибка удаления временного файла: {e}")
 
+class MandreSheetContrl:
+    """
+    Контроллер для управления активным BottomSheet.
+    """
+    def __init__(self):
+        self.root = None
+        self.context = None
+        self.sheet = None
+        self.view_creators = {}
+        self.callbacks = {}
+        self._views_cache = {} 
+        self._is_ready = False
+
+    def _init_internal(self, context, root, sheet, creators, callbacks):
+        self.context = context
+        self.root = root
+        self.sheet = sheet
+        self.view_creators = creators
+        self.callbacks = callbacks
+        self._is_ready = True
+
+    # --- НОВЫЙ МЕТОД ---
+    def lock_swipe_on_interaction(self, view_id: str):
+        """
+        Блокирует жест закрытия (свайп вниз) BottomSheet, пока пользователь 
+        взаимодействует с указанным View (касается его).
+        Полезно для карт, ScrollView внутри листа, Canvas или WebView.
+        """
+        view = self.get_view(view_id)
+        if not view:
+            log(f"[MandreSheetContrl] View с ID '{view_id}' не найден для блокировки свайпа.")
+            return
+
+        try:
+            MotionEvent = find_class("android.view.MotionEvent")
+            ViewOnTouchListener = find_class("android.view.View$OnTouchListener")
+
+            class _TouchLocker(dynamic_proxy(ViewOnTouchListener)):
+                def onTouch(self, v, event):
+                    action = event.getAction()
+                    # ACTION_DOWN = 0: Палец коснулся экрана
+                    if action == 0: 
+                        # Запрещаем родителям (BottomSheet) перехватывать касания
+                        v.getParent().requestDisallowInterceptTouchEvent(True)
+                    # ACTION_UP = 1, ACTION_CANCEL = 3: Палец убран
+                    elif action == 1 or action == 3:
+                        # Разрешаем перехват обратно (хотя обычно это сбрасывается само)
+                        v.getParent().requestDisallowInterceptTouchEvent(False)
+                    
+                    # Возвращаем False, чтобы сам View продолжил обрабатывать событие 
+                    # (например, скроллил свой контент или нажимался)
+                    return False
+
+            view.setOnTouchListener(_TouchLocker())
+            log(f"[MandreSheetContrl] Блокировка свайпа установлена для '{view_id}'")
+        except Exception as e:
+            log(f"[MandreSheetContrl] Ошибка установки блокировки свайпа: {e}")
+    # -------------------
+
+    def update(self, new_dsl: str, new_callbacks: Dict[str, Callable] = None):
+        if not self._is_ready: return
+        if new_callbacks: self.callbacks = new_callbacks
+
+        def runner():
+            try:
+                data = MandreUI._parse_sheet_dsl(new_dsl)
+                if not data: return
+
+                # 1. Фиксация высоты против схлопывания
+                current_height = self.root.getHeight()
+                params = self.root.getLayoutParams()
+                params.height = current_height
+                self.root.setLayoutParams(params)
+
+                # 2. Настройка умной анимации
+                transition_target = self.root
+                if self.root.getParent() and isinstance(self.root.getParent(), ViewGroup):
+                    transition_target = self.root.getParent()
+
+                transition = TransitionSet()
+                transition.setOrdering(TransitionSet.ORDERING_TOGETHER)
+                
+                # ChangeBounds анимирует размеры и позицию (Морфинг)
+                # Применяем ко всему
+                transition.addTransition(ChangeBounds().setResizeClip(True))
+                
+                # ChangeTransform для кнопок и прочего
+                transition.addTransition(ChangeTransform())
+                
+                # Fade (Исчезновение/Появление)
+                # ВАЖНО: Исключаем "mandre_custom_view" из Fade!
+                # Чтобы он не моргал, а только менял размер.
+                fade = Fade(Fade.IN | Fade.OUT)
+                fade.excludeTarget("mandre_custom_view", True) 
+                transition.addTransition(fade)
+                
+                transition.setDuration(300)
+                transition.setInterpolator(AccelerateDecelerateInterpolator())
+                
+                TransitionManager.beginDelayedTransition(transition_target, transition)
+
+                # 3. Ребилд
+                self.root.removeAllViews()
+                self._views_cache.clear()
+                MandreUI._fill_sheet_content(self.context, self.root, data, self.callbacks, self.view_creators, self)
+                
+                # 4. Снимаем фиксацию
+                params.height = -2 
+                self.root.setLayoutParams(params)
+                
+            except Exception as e:
+                log(f"[MandreSheetContrl] Update error: {e}")
+
+        run_on_ui_thread(runner)
+
+    def dismiss(self):
+        if self.sheet:
+            try: self.sheet.dismiss()
+            except: pass
+
+    def get_view(self, view_id: str):
+        return self._views_cache.get(view_id)
+
+    def _register_view(self, vid, view):
+        if vid: self._views_cache[vid] = view
+        
 class MandreUI:
     @staticmethod
     def _internal_invoke_ripple(x: float, y: float, intensity: float):
@@ -1880,91 +2012,189 @@ class MandreUI:
     
     @staticmethod
     def _create_and_add_bar(activity, root_view, config):
-        bar_container = LinearLayout(activity)
-        bar_container.setOrientation(LinearLayout.HORIZONTAL)
-        bar_container.setGravity(Gravity.CENTER)
-        bar_container.setElevation(0)
+        # 1. РЕЗОЛВИНГ ЦВЕТОВ
+        
+        # Фон бара
+        bg_color = config.get("bg_color")
+        if bg_color is None:
+            bg_color = Theme.getColor(Theme.key_windowBackgroundWhite)
+        config["bg_color"] = bg_color
 
+        # Цвет пилюли (фон активной кнопки)
+        active_pill_color = config.get("active_bg_color")
+        if active_pill_color is None:
+            active_pill_color = Theme.getColor(Theme.key_featuredStickers_addButton)
+        config["active_bg_color"] = active_pill_color
+
+        # Цвет ИКОНКИ активной (должен быть контрастным к пилюле)
+        # Обычно это цвет текста внутри кнопки
+        active_icon_color = config.get("active_color")
+        if active_icon_color is None:
+            active_icon_color = Theme.getColor(Theme.key_featuredStickers_buttonText)
+        config["active_color"] = active_icon_color
+
+        # Цвет ТЕКСТА активного (должен быть контрастным к ФОНУ бара)
+        # Берем основной цвет текста приложения (в темной теме он белый/светлый)
+        # Либо можно взять key_windowBackgroundWhiteBlueText (акцентный)
+        active_text_color_val = config.get("active_text_color")
+        if active_text_color_val is None:
+            # Используем акцентный цвет текста, он обычно хорошо читается и совпадает с темой
+            active_text_color_val = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
+        config["active_text_color"] = active_text_color_val
+
+        # Цвет неактивных элементов (серый)
+        inactive_content_color = config.get("inactive_color")
+        if inactive_content_color is None:
+            inactive_content_color = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText)
+        config["inactive_color"] = inactive_content_color
+
+        # 2. СОЗДАНИЕ КОНТЕЙНЕРА
+        bar_container = FrameLayout(activity)
+        
         bg_drawable = GradientDrawable()
-        bg_drawable.setColor(config["bg_color"])
+        bg_drawable.setColor(bg_color)
         bg_drawable.setCornerRadius(AndroidUtilities.dp(config["corner_radius_dp"]))
-        bg_drawable.setStroke(AndroidUtilities.dp(config["stroke_width_dp"]), config["stroke_color"])
+        
+        if config.get("stroke_width_dp", 0) > 0:
+            bg_drawable.setStroke(AndroidUtilities.dp(config["stroke_width_dp"]), config["stroke_color"])
+            
         bar_container.setBackground(bg_drawable)
         
-        ui_elements = []
-        for i, item in enumerate(config["items"]):
-            item_frame = FrameLayout(activity)
-            frame_params = LinearLayout.LayoutParams(0, -1, 1.0)
-            item_frame.setLayoutParams(frame_params)
+        if Build.VERSION.SDK_INT >= 21:
+            bar_container.setElevation(AndroidUtilities.dp(4))
+            try:
+                from android.view import ViewOutlineProvider
+                bar_container.setOutlineProvider(ViewOutlineProvider.BACKGROUND)
+                bar_container.setClipToOutline(True)
+            except: pass
 
+        items_layout = LinearLayout(activity)
+        items_layout.setOrientation(LinearLayout.HORIZONTAL)
+        items_layout.setWeightSum(float(len(config["items"])))
+        bar_container.addView(items_layout, LayoutHelper.createFrame(-1, -1))
+        
+        ui_elements = []
+        
+        for i, item in enumerate(config["items"]):
+            item_click_area = FrameLayout(activity)
+            item_click_area.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2))
+            
+            lp = LinearLayout.LayoutParams(0, -1, 1.0)
+            items_layout.addView(item_click_area, lp)
+
+            # --- PILL ---
             pill_view = View(activity)
             pill_bg = GradientDrawable()
-            pill_bg.setColor(config["active_bg_color"])
-            pill_bg.setCornerRadius(AndroidUtilities.dp(config["corner_radius_dp"] - 8))
+            pill_bg.setColor(active_pill_color)
+            pill_bg.setCornerRadius(AndroidUtilities.dp(16)) 
             pill_view.setBackground(pill_bg)
-            pill_params = FrameLayout.LayoutParams(-1, -1)
-            pill_params.setMargins(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4))
+            
+            pill_w = AndroidUtilities.dp(64)
+            pill_h = AndroidUtilities.dp(32)
+            
+            pill_params = FrameLayout.LayoutParams(pill_w, pill_h)
+            pill_params.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP
+            pill_params.topMargin = AndroidUtilities.dp(12)
             pill_view.setLayoutParams(pill_params)
             
             is_active = (i == config["active_index"])
             pill_view.setAlpha(1.0 if is_active else 0.0)
-            if is_active:
-                pill_view.setScaleX(0.8); pill_view.setScaleY(0.8)
-                pill_view.animate().scaleX(1.0).scaleY(1.0).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
-            item_frame.addView(pill_view)
-
-            button_container = LinearLayout(activity)
-            button_container.setOrientation(LinearLayout.VERTICAL)
-            button_container.setGravity(Gravity.CENTER)
-            button_container.setLayoutParams(FrameLayout.LayoutParams(-1, -1))
-            button_container.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6))
-            button_container.setBackground(ColorDrawable(Color.TRANSPARENT))
-            button_container.setClickable(True)
-
-            tint_color = config["active_color"] if is_active else config["inactive_color"]
+            pill_view.setScaleX(1.0 if is_active else 0.5)
+            pill_view.setScaleY(1.0 if is_active else 0.5)
             
+            item_click_area.addView(pill_view)
+
+            # --- CONTENT ---
+            content_container = LinearLayout(activity)
+            content_container.setOrientation(LinearLayout.VERTICAL)
+            content_container.setGravity(Gravity.CENTER)
+            
+            # Icon
             icon_view = ImageView(activity)
             res_id = ApplicationLoader.applicationContext.getResources().getIdentifier(item.get("icon"), "drawable", ApplicationLoader.applicationContext.getPackageName())
             if res_id != 0:
                 icon_view.setImageResource(res_id)
-                icon_view.setColorFilter(tint_color)
-            icon_params = LinearLayout.LayoutParams(AndroidUtilities.dp(24), AndroidUtilities.dp(24))
-            button_container.addView(icon_view, icon_params)
+            
+            icon_size = AndroidUtilities.dp(24)
+            content_container.addView(icon_view, LinearLayout.LayoutParams(icon_size, icon_size))
 
+            # Text
             text_view = TextView(activity)
             text_view.setText(item.get("text", ""))
-            text_view.setTextColor(tint_color)
-            text_view.setTextSize(11)
+            text_view.setTextSize(12) 
+            text_view.setTypeface(AndroidUtilities.bold())
             text_view.setGravity(Gravity.CENTER)
             text_params = LinearLayout.LayoutParams(-2, -2)
-            text_params.topMargin = AndroidUtilities.dp(2)
-            button_container.addView(text_view, text_params)
+            text_params.topMargin = AndroidUtilities.dp(4)
+            content_container.addView(text_view, text_params)
+
+            cont_params = FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL | Gravity.TOP)
+            cont_params.topMargin = AndroidUtilities.dp(16)
+            item_click_area.addView(content_container, cont_params)
+
+            # Initial Colors applying
+            # Иконка зависит от того, внутри пилюли она или нет
+            # Текст всегда на фоне бара
             
+            if is_active:
+                icon_view.setColorFilter(active_icon_color)
+                text_view.setTextColor(active_text_color_val)
+            else:
+                icon_view.setColorFilter(inactive_content_color)
+                text_view.setTextColor(inactive_content_color)
+            
+            # Handler
             def create_click_handler(index, on_click_callback, plugin_instance):
-                def handler(*args):
-                    if callable(on_click_callback):
-                        on_click_callback()
-                    # Обновляем визуальное состояние панели немедленно
+                def handler(v):
                     Mandre.UI.update_bottom_bar(plugin_instance.id, index)
-                    # Затем перезагружаем настройки для отображения нужной вкладки
+                    if callable(on_click_callback):
+                        try: on_click_callback()
+                        except: pass
+                    try: v.performHapticFeedback(3)
+                    except: pass
                     Mandre.apply_and_refresh_settings(plugin_instance)
                 return handler
 
             on_click_callback = item.get("on_click")
-            button_container.setOnClickListener(OnClickListener(create_click_handler(i, on_click_callback, config["plugin_instance"])))
+            item_click_area.setOnClickListener(OnClickListener(create_click_handler(i, on_click_callback, config["plugin_instance"])))
             
-            item_frame.addView(button_container)
-            bar_container.addView(item_frame)
-            ui_elements.append({"icon": icon_view, "text": text_view, "pill": pill_view})
+            ui_elements.append({
+                "icon": icon_view, 
+                "text": text_view, 
+                "pill": pill_view,
+                "active_icon_color": active_icon_color, # Цвет иконки (для пилюли)
+                "active_text_color": active_text_color_val, # Цвет текста (для фона)
+                "inactive_color": inactive_content_color
+            })
 
-        bar_params = FrameLayout.LayoutParams(-1, AndroidUtilities.dp(56))
+        # Bar Position
+        bar_height = AndroidUtilities.dp(80)
+        bar_params = FrameLayout.LayoutParams(-1, bar_height)
         bar_params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
-        bar_params.setMargins(AndroidUtilities.dp(24), 0, AndroidUtilities.dp(24), AndroidUtilities.dp(12))
+        
+        margin_side = AndroidUtilities.dp(16)
+        margin_bottom = AndroidUtilities.dp(16)
+        
+        bar_params.setMargins(margin_side, 0, margin_side, margin_bottom)
         
         root_view.addView(bar_container, bar_params)
         
+        # Anim entry
         bar_container.setTranslationY(AndroidUtilities.dp(100))
-        ObjectAnimator.ofFloat(bar_container, "translationY", AndroidUtilities.dp(100), 0).setDuration(250).start()
+        bar_container.setAlpha(0.0)
+        
+        try:
+            animset = AnimatorSet()
+            animset.playTogether([
+                ObjectAnimator.ofFloat(bar_container, "translationY", float(AndroidUtilities.dp(100)), 0.0),
+                ObjectAnimator.ofFloat(bar_container, "alpha", 0.0, 1.0)
+            ])
+            animset.setDuration(400)
+            animset.setInterpolator(DecelerateInterpolator())
+            animset.start()
+        except Exception as e:
+            bar_container.setTranslationY(0.0)
+            bar_container.setAlpha(1.0)
         
         config["view_instance"] = bar_container
         config["ui_elements"] = ui_elements
@@ -1976,21 +2206,27 @@ class MandreUI:
             config = _BOTTOM_BAR_CONFIGS[plugin_id]
             
             if config.get("active_index") == active_index: return
-
             config["active_index"] = active_index
             
             ui_elements = config.get("ui_elements", [])
             for i, elements in enumerate(ui_elements):
                 is_active = (i == active_index)
-                tint_color = config["active_color"] if is_active else config["inactive_color"]
                 
-                elements["icon"].setColorFilter(tint_color)
-                elements["text"].setTextColor(tint_color)
+                # Colors logic fixed for Dark Mode readability
+                icon_color = elements["active_icon_color"] if is_active else elements["inactive_color"]
+                text_color = elements["active_text_color"] if is_active else elements["inactive_color"]
+                
+                try:
+                    elements["icon"].setColorFilter(icon_color)
+                    elements["text"].setTextColor(text_color)
+                except Exception:
+                    pass
                 
                 pill = elements["pill"]
-                target_alpha = 1.0 if is_active else 0.0
-                if pill.getAlpha() != target_alpha:
-                    pill.animate().alpha(target_alpha).setDuration(200).start()
+                if is_active:
+                    pill.animate().alpha(1.0).scaleX(1.0).scaleY(1.0).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
+                else:
+                    pill.animate().alpha(0.0).scaleX(0.5).scaleY(0.5).setDuration(200).start()
 
         run_on_ui_thread(updater)
 
@@ -1999,13 +2235,14 @@ class MandreUI:
         plugin_instance: BasePlugin,
         items: List[Dict[str, Any]],
         active_index_key: str = "active_tab",
-        bg_color: int = Color.argb(210, 50, 50, 55),
-        active_color: int = Color.WHITE,
-        inactive_color: int = Color.rgb(140, 140, 140),
-        active_bg_color: int = Color.argb(80, 255, 255, 255),
-        stroke_color: int = Color.argb(80, 120, 120, 120),
-        stroke_width_dp: int = 1,
-        corner_radius_dp: int = 28
+        # Цвета ставим в None, чтобы они брались из темы Telegram динамически
+        bg_color: int = None, 
+        active_color: int = None,
+        inactive_color: int = None,
+        active_bg_color: int = None,
+        stroke_color: int = 0, # По умолчанию без обводки
+        stroke_width_dp: int = 0,
+        corner_radius_dp: int = 20 # Скругление как у MD3 контейнеров
     ):
         global _bottom_bar_hooks_installed
         plugin_id = plugin_instance.id
@@ -2013,9 +2250,13 @@ class MandreUI:
         _BOTTOM_BAR_CONFIGS[plugin_id] = {
             "plugin_id": plugin_id, "plugin_instance": plugin_instance,
             "items": items, "active_index_key": active_index_key,
-            "bg_color": bg_color, "active_color": active_color, "inactive_color": inactive_color,
-            "active_bg_color": active_bg_color, "stroke_color": stroke_color,
-            "stroke_width_dp": stroke_width_dp, "corner_radius_dp": corner_radius_dp,
+            "bg_color": bg_color, 
+            "active_color": active_color, 
+            "inactive_color": inactive_color,
+            "active_bg_color": active_bg_color, 
+            "stroke_color": stroke_color,
+            "stroke_width_dp": stroke_width_dp, 
+            "corner_radius_dp": corner_radius_dp,
             "view_instance": None, "ui_elements": []
         }
 
@@ -2036,9 +2277,11 @@ class MandreUI:
             log(f"[MandreLib] Не удалось установить хуки для BottomBar: {traceback.format_exc()}")
 
     @staticmethod
-    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None, view_creators: Dict[str, Callable] = None):
+    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None, view_creators: Dict[str, Callable] = None) -> MandreSheetContrl:
         if callbacks is None: callbacks = {}
         if view_creators is None: view_creators = {}
+        
+        controller = MandreSheetContrl() # Теперь Python знает этот класс!
         
         def runner():
             try:
@@ -2046,187 +2289,251 @@ class MandreUI:
                 context = fragment.getParentActivity() if fragment else None
                 if not context: return
 
-                # Парсим DSL
                 data = MandreUI._parse_sheet_dsl(dsl)
                 if not data: return
 
                 sheet = BottomSheet(context, False)
                 
-                # Root Layout
                 root = LinearLayout(context)
                 root.setOrientation(LinearLayout.VERTICAL)
                 root.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(16), AndroidUtilities.dp(20), AndroidUtilities.dp(20))
+
+                # --- ДОБАВИТЬ ВОТ ЭТО ДЛЯ ПЛАВНОСТИ ---
+                try:
+                    from android.animation import LayoutTransition
+                    lt = LayoutTransition()
+                    lt.enableTransitionType(LayoutTransition.CHANGING) # Включает анимацию при изменении размеров
+                    root.setLayoutTransition(lt)
+                except: pass
+                # ---------------------------------------
                 
-                def get_size(item_dict, key, default):
-                    try: return int(item_dict.get(key, default))
-                    except: return default
-
-                # --- 1. Title ---
-                if data.get("title"):
-                    title_tv = TextView(context)
-                    title_tv.setText(str(data["title"]))
-                    title_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "title_size", 20))
-                    title_tv.setTypeface(AndroidUtilities.bold())
-                    title_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-                    root.addView(title_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-
-                # --- 2. Tags ---
-                if data.get("tags"):
-                    tags_container = LinearLayout(context)
-                    tags_container.setOrientation(LinearLayout.HORIZONTAL)
-                    for tag in data["tags"]:
-                        tag_frame = FrameLayout(context)
-                        bg = GradientDrawable()
-                        bg.setCornerRadius(AndroidUtilities.dp(8))
-                        col_str = tag.get("color")
-                        text_color = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
-                        if col_str:
-                            try: text_color = Color.parseColor(col_str)
-                            except: pass
-                        bg_color = (text_color & 0x00FFFFFF) | 0x20000000
-                        bg.setColor(bg_color)
-                        tag_frame.setBackground(bg)
-                        tv = TextView(context)
-                        tv.setText(tag.get("text", ""))
-                        tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(tag, "size", 12))
-                        tv.setTypeface(AndroidUtilities.bold())
-                        tv.setTextColor(text_color)
-                        tv.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(4), AndroidUtilities.dp(10), AndroidUtilities.dp(4))
-                        tag_frame.addView(tv)
-                        tags_container.addView(tag_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 6, 0))
-                    root.addView(tags_container, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 8))
-
-                # --- 3. Subtext ---
-                if data.get("subtext"):
-                    sub_tv = TextView(context)
-                    sub_tv.setText(str(data["subtext"]))
-                    sub_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "sub_size", 13))
-                    sub_tv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
-                    root.addView(sub_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-
-                # --- 4.1 Custom View (НОВОЕ!) ---
-                # Вставляем кастомный View, если он есть в DSL и передан creator
-                custom_view_data = data.get("view")
-                if custom_view_data:
-                    vid = custom_view_data.get("id")
-                    if vid and vid in view_creators:
-                        try:
-                            c_view = view_creators[vid](context) # Создаем View
-                            if c_view:
-                                # Устанавливаем высоту, если задана в DSL
-                                height_dp = get_size(custom_view_data, "height", 0)
-                                height_px = AndroidUtilities.dp(height_dp) if height_dp > 0 else -2
-                                root.addView(c_view, LayoutHelper.createLinear(-1, height_px, 0, 0, 0, 12))
-                        except Exception as e:
-                            log(f"[MandreUI] View creation error: {e}")
-
-                # --- 4.2 Content (Text) ---
-                # Старый добрый текст. Если есть и view и текст - текст будет ниже.
-                content_data = data.get("content", {})
-                content_text = content_data.get("text", "")
-                
-                if content_text:
-                    scroll = ScrollView(context)
-                    scroll.setVerticalScrollBarEnabled(False)
-                    content_tv = TextView(context)
-                    content_tv.setText(content_text)
-                    content_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(content_data, "size", 15))
-                    content_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-                    content_tv.setTextIsSelectable(True)
-                    content_tv.setLineSpacing(AndroidUtilities.dp(2), 1.1)
-                    scroll.addView(content_tv)
-                    # Если есть кастомный вью, тексту даем фиксированную высоту или вес, тут по ситуации.
-                    # Даем вес 1.0, чтобы занимал оставшееся место
-                    root.addView(scroll, LayoutHelper.createLinear(-1, 0, 1.0))
-
-                div = View(context)
-                div.setBackgroundColor(Theme.getColor(Theme.key_divider))
-                root.addView(div, LayoutHelper.createLinear(-1, 1, 0, 16, 0, 12))
-
-                # --- 5. Actions ---
-                if data.get("actions"):
-                    actions_row = LinearLayout(context)
-                    actions_row.setOrientation(LinearLayout.HORIZONTAL)
-                    actions_row.setGravity(Gravity.CENTER_VERTICAL)
-                    
-                    for item in data["actions"]:
-                        itype = item.get("type")
-                        btn_frame = FrameLayout(context)
-                        btn_bg = GradientDrawable()
-                        btn_bg.setCornerRadius(AndroidUtilities.dp(18))
-                        btn_bg.setColor(Theme.getColor(Theme.key_chat_inLoader) & 0x20FFFFFF | 0x10000000)
-                        btn_frame.setBackground(btn_bg)
-                        
-                        content_layout = LinearLayout(context)
-                        content_layout.setOrientation(LinearLayout.HORIZONTAL)
-                        content_layout.setGravity(Gravity.CENTER)
-                        content_layout.setPadding(AndroidUtilities.dp(14), AndroidUtilities.dp(10), AndroidUtilities.dp(14), AndroidUtilities.dp(10))
-                        
-                        if item.get("icon"):
-                            iv = ImageView(context)
-                            res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
-                            if res_id != 0:
-                                iv.setImageResource(res_id)
-                                iv.setColorFilter(Theme.getColor(Theme.key_dialogTextBlack))
-                                content_layout.addView(iv, LayoutHelper.createLinear(20, 20))
-                        
-                        if item.get("text"):
-                            tv = TextView(context)
-                            tv.setText(item["text"])
-                            tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(item, "size", 14))
-                            tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-                            tv.setGravity(Gravity.CENTER)
-                            ml = 6 if item.get("icon") else 0
-                            content_layout.addView(tv, LayoutHelper.createLinear(-2, -2, Gravity.CENTER, ml, 0, 0, 0))
-
-                        btn_frame.addView(content_layout)
-                        
-                        if itype == "button":
-                            cid = item.get("id")
-                            if cid and cid in callbacks:
-                                # Передаем sheet в колбэк, чтобы можно было его закрыть внутри
-                                btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: f(sheet)))
-                            else:
-                                btn_frame.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
-                        
-                        elif itype == "menu":
-                            menu_items = item.get("items", [])
-                            def show_popup(anchor, items=menu_items):
-                                MandreUI._show_popup_menu(anchor, items, callbacks, sheet)
-                            btn_frame.setOnClickListener(OnClickListener(lambda v: show_popup(v)))
-
-                        actions_row.addView(btn_frame, LayoutHelper.createLinear(-2, -2, 0, 0, 8, 0))
-                    root.addView(actions_row, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-
-                # --- 6. Close Button ---
-                close_btn = FrameLayout(context)
-                c_bg = GradientDrawable()
-                c_bg.setCornerRadius(AndroidUtilities.dp(10))
-                c_bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText))
-                close_btn.setBackground(c_bg)
-                close_btn.setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12))
-                c_text = TextView(context)
-                c_text.setText(data.get("close_text", "Закрыть"))
-                c_text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "close_size", 15))
-                c_text.setTypeface(AndroidUtilities.bold())
-                c_text.setTextColor(Color.WHITE)
-                c_text.setGravity(Gravity.CENTER)
-                close_btn.addView(c_text)
-                close_btn.setOnClickListener(OnClickListener(lambda v: sheet.dismiss()))
-                root.addView(close_btn, LayoutHelper.createLinear(-1, -2))
+                controller._init_internal(context, root, sheet, view_creators, callbacks)
+                MandreUI._fill_sheet_content(context, root, data, callbacks, view_creators, controller)
 
                 sheet.setCustomView(root)
                 sheet.show()
             except Exception as e:
-                log(f"[MandreUI] Error showing sheet: {e}")
+                log(f"[MandreUI] Error: {e}")
                 BulletinHelper.show_error(f"UI Error: {e}")
 
         run_on_ui_thread(runner)
+        return controller
+
+    @staticmethod
+    def _fill_sheet_content(context, root, data, callbacks, view_creators, controller):
+        def get_size(item_dict, key, default):
+            try: return int(item_dict.get(key, default))
+            except: return default
+
+        # --- Title ---
+        if data.get("title"):
+            title_tv = TextView(context)
+            title_tv.setText(str(data["title"]))
+            title_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "title_size", 20))
+            title_tv.setTypeface(AndroidUtilities.bold())
+            title_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+            root.addView(title_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+            controller._register_view(data.get("id"), title_tv)
+
+        # --- Tags (Smart Layout) ---
+        if data.get("tags"):
+            tags_container = LinearLayout(context)
+            tags_container.setOrientation(LinearLayout.HORIZONTAL)
+            # Вес будет распределяться равномерно
+            tags_container.setWeightSum(float(len(data["tags"])))
+            
+            for tag in data["tags"]:
+                tag_frame = FrameLayout(context)
+                bg = GradientDrawable()
+                bg.setCornerRadius(AndroidUtilities.dp(8))
+                
+                col_str = tag.get("color")
+                text_color = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
+                bg_col_val = 0x20000000
+                
+                if col_str:
+                    try: 
+                        c = Color.parseColor(col_str)
+                        text_color = c
+                        bg_col_val = (c & 0x00FFFFFF) | 0x20000000 
+                    except: pass
+                
+                bg.setColor(bg_col_val)
+                tag_frame.setBackground(bg)
+                
+                tv = TextView(context)
+                tv.setText(tag.get("text", ""))
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(tag, "size", 12))
+                tv.setTypeface(AndroidUtilities.bold())
+                tv.setTextColor(text_color)
+                tv.setGravity(Gravity.CENTER) # Текст внутри тега по центру
+                tv.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(6), AndroidUtilities.dp(4), AndroidUtilities.dp(6))
+                
+                tag_frame.addView(tv, LayoutHelper.createFrame(-1, -2)) # Frame match_parent внутри
+                
+                # SMART LAYOUT: width=0, weight=1.0 -> Растягивание
+                lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
+                lp.setMargins(AndroidUtilities.dp(4), 0, AndroidUtilities.dp(4), 0)
+                tags_container.addView(tag_frame, lp)
+                
+                controller._register_view(tag.get("id"), tv)
+
+            # Убираем отступы у крайних элементов для красоты
+            root.addView(tags_container, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 8))
+
+        # --- Subtext ---
+        if data.get("subtext"):
+            sub_tv = TextView(context)
+            sub_tv.setText(str(data["subtext"]))
+            sub_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "sub_size", 13))
+            sub_tv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
+            root.addView(sub_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+            controller._register_view("subtext", sub_tv)
+
+        # --- Custom View ---
+        custom_view_data = data.get("view")
+        if custom_view_data:
+            vid = custom_view_data.get("id")
+            if vid and vid in view_creators:
+                try:
+                    c_view = view_creators[vid](context)
+                    if c_view:
+                        if c_view.getParent(): c_view.getParent().removeView(c_view)
+                        
+                        # ВАЖНО: Даем View уникальное имя для анимации
+                        # Это позволит TransitionManager понять, что это ТОТ ЖЕ view
+                        c_view.setTransitionName("mandre_custom_view")
+                        
+                        height_dp = get_size(custom_view_data, "height", 0)
+                        height_px = AndroidUtilities.dp(height_dp) if height_dp > 0 else -2
+                        root.addView(c_view, LayoutHelper.createLinear(-1, height_px, 0, 0, 0, 12))
+                        controller._register_view(vid, c_view)
+                except Exception as e:
+                    log(f"[MandreUI] View error: {e}")
+
+        # --- Content (Text + Align) ---
+        content_data = data.get("content", {})
+        content_text = content_data.get("text", "")
+        if content_text:
+            scroll = ScrollView(context)
+            scroll.setVerticalScrollBarEnabled(False)
+            content_tv = TextView(context)
+            content_tv.setText(content_text)
+            content_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(content_data, "size", 15))
+            content_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+            content_tv.setTextIsSelectable(True)
+            content_tv.setLineSpacing(AndroidUtilities.dp(2), 1.1)
+            
+            # ALIGNMENT LOGIC
+            align_map = {
+                "left": Gravity.LEFT,
+                "center": Gravity.CENTER,
+                "right": Gravity.RIGHT,
+                "start": Gravity.START,
+                "end": Gravity.END
+            }
+            gravity = align_map.get(content_data.get("align", "left").lower(), Gravity.LEFT)
+            content_tv.setGravity(gravity)
+            
+            scroll.addView(content_tv)
+            root.addView(scroll, LayoutHelper.createLinear(-1, 0, 1.0))
+            controller._register_view(content_data.get("id", "content"), content_tv)
+
+        if data.get("actions"):
+            div = View(context)
+            div.setBackgroundColor(Theme.getColor(Theme.key_divider))
+            root.addView(div, LayoutHelper.createLinear(-1, 1, 0, 16, 0, 12))
+
+        # --- Actions (Smart Layout) ---
+        if data.get("actions"):
+            actions_row = LinearLayout(context)
+            actions_row.setOrientation(LinearLayout.HORIZONTAL)
+            actions_row.setGravity(Gravity.CENTER_VERTICAL)
+            actions_row.setWeightSum(float(len(data["actions"]))) # Равномерное распределение
+            
+            for item in data["actions"]:
+                itype = item.get("type")
+                btn_frame = FrameLayout(context)
+                btn_bg = GradientDrawable()
+                btn_bg.setCornerRadius(AndroidUtilities.dp(18))
+                
+                # Цвет фона кнопки
+                col_str = item.get("color") # Можно задать цвет кнопки в DSL!
+                bg_color = Theme.getColor(Theme.key_chat_inLoader) & 0x20FFFFFF | 0x10000000
+                if col_str:
+                    try: bg_color = (Color.parseColor(col_str) & 0x00FFFFFF) | 0x20000000
+                    except: pass
+                
+                btn_bg.setColor(bg_color)
+                btn_frame.setBackground(btn_bg)
+                
+                content_layout = LinearLayout(context)
+                content_layout.setOrientation(LinearLayout.HORIZONTAL)
+                content_layout.setGravity(Gravity.CENTER)
+                content_layout.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(10), AndroidUtilities.dp(12), AndroidUtilities.dp(10))
+                
+                if item.get("icon"):
+                    iv = ImageView(context)
+                    res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
+                    if res_id != 0:
+                        iv.setImageResource(res_id)
+                        iv.setColorFilter(Theme.getColor(Theme.key_dialogTextBlack))
+                        content_layout.addView(iv, LayoutHelper.createLinear(20, 20))
+                
+                if item.get("text"):
+                    tv = TextView(context)
+                    tv.setText(item["text"])
+                    tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(item, "size", 14))
+                    tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+                    tv.setGravity(Gravity.CENTER)
+                    # Если есть иконка, даем отступ
+                    ml = 6 if item.get("icon") else 0
+                    content_layout.addView(tv, LayoutHelper.createLinear(-2, -2, Gravity.CENTER, ml, 0, 0, 0))
+
+                btn_frame.addView(content_layout, LayoutHelper.createFrame(-2, -2, Gravity.CENTER))
+                
+                # Click Logic
+                cid = item.get("id")
+                if itype == "button":
+                    if cid and cid in callbacks:
+                        btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: f(controller)))
+                    else:
+                        btn_frame.setOnClickListener(OnClickListener(lambda v: controller.dismiss()))
+                elif itype == "menu":
+                    menu_items = item.get("items", [])
+                    def show_popup(anchor, items=menu_items):
+                        MandreUI._show_popup_menu(anchor, items, callbacks, controller.sheet)
+                    btn_frame.setOnClickListener(OnClickListener(lambda v: show_popup(v)))
+
+                # SMART LAYOUT: width=0, weight=1.0
+                lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
+                lp.setMargins(AndroidUtilities.dp(4), 0, AndroidUtilities.dp(4), 0)
+                actions_row.addView(btn_frame, lp)
+            
+            root.addView(actions_row, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
+
+        # --- Close Button ---
+        close_btn = FrameLayout(context)
+        c_bg = GradientDrawable()
+        c_bg.setCornerRadius(AndroidUtilities.dp(10))
+        c_bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText))
+        close_btn.setBackground(c_bg)
+        close_btn.setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12))
+        c_text = TextView(context)
+        c_text.setText(data.get("close_text", "Закрыть"))
+        c_text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "close_size", 15))
+        c_text.setTypeface(AndroidUtilities.bold())
+        c_text.setTextColor(Color.WHITE)
+        c_text.setGravity(Gravity.CENTER)
+        close_btn.addView(c_text)
+        close_btn.setOnClickListener(OnClickListener(lambda v: controller.dismiss()))
+        root.addView(close_btn, LayoutHelper.createLinear(-1, -2))
 
     @staticmethod
     def _parse_sheet_dsl(dsl: str) -> Dict:
         try:
             import re
+            # Корневой тег
             root_match = re.search(r'<sheet\s*(.*?)>(.*)</sheet>', dsl, re.DOTALL)
             if not root_match: return None
             
@@ -2246,7 +2553,7 @@ class MandreUI:
                 content_info["text"] = c_text.strip()
                 result["content"] = content_info
             
-            # View (WebView placeholder) - НОВОЕ
+            # Custom View (<view>)
             v_match = re.search(r'<view\s*(.*?)/>', body)
             if v_match:
                 v_attrs = v_match.group(1)
@@ -2281,7 +2588,7 @@ class MandreUI:
             
     @staticmethod
     def _show_popup_menu(anchor, items, callbacks, sheet):
-        # (Этот метод остается без изменений, но убедитесь, что он присутствует в классе)
+        # (код popup menu, оставь как был)
         try:
             context = anchor.getContext()
             layout = ActionBarPopupWindow.ActionBarPopupWindowLayout(context)
@@ -2309,8 +2616,6 @@ class MandreUI:
                 tv = TextView(context)
                 tv.setText(item.get("text", ""))
                 tv.setTextColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuItem))
-                # Размер текста в меню тоже можно настроить, если добавить атрибут size в <item>
-                # tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, int(item.get("size", 16)))
                 tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16)
                 lin.addView(tv)
                 
@@ -2320,8 +2625,10 @@ class MandreUI:
                 def on_click(v, func=callbacks.get(cid)):
                     popup.dismiss()
                     if func: 
-                        sheet.dismiss()
-                        func()
+                        # Меню не может вызывать update контроллера напрямую (пока), 
+                        # поэтому просто вызываем функцию без аргументов
+                        try: func() 
+                        except: pass
                         
                 frame.setOnClickListener(OnClickListener(on_click))
                 layout.addView(frame, LayoutHelper.createLinear(-1, -2))
@@ -2543,6 +2850,7 @@ class Mandre:
     Settings = MandreSettings
     Suggestions = MandreSuggestions
     Messages = MandreMessages
+    SheetController = MandreSheetContrl 
     # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
 
     _DB_CACHE_STORAGE = None
@@ -2578,13 +2886,75 @@ class Mandre:
         if plugin_instance.id: Mandre.remove_tg_alias(plugin_instance.id); log(f"[MandreLib] Алиас настроек для {plugin_instance.id} удален.")
             
     @staticmethod
-    def apply_and_refresh_settings(plugin_instance: BasePlugin):
+    def apply_and_refresh_settings(plugin_instance):
         def refresher():
             try:
-                PluginsController.getInstance().loadPluginSettings(plugin_instance.id)
-                log(f"[MandreLib] Настройки для {plugin_instance.id} перезагружены через контроллер.")
+                # Импортируем R под другим именем, чтобы не было конфликтов
+                from android_utils import R as RunnableArg 
+
+                fragment = get_last_fragment()
+                listView = None
+                
+                if fragment:
+                    cls_name = str(fragment.getClass().getName())
+                    if "PluginSettingsActivity" in cls_name:
+                        listView = get_private_field(fragment, "listView")
+
+                if not listView:
+                    PluginsController.getInstance().loadPluginSettings(plugin_instance.id)
+                    return
+
+                # 1. FADE OUT (Быстро скрываем)
+                # Важно: duration поменьше, чтобы отзывчивость была высокой
+                listView.animate()\
+                    .alpha(0.0)\
+                    .scaleX(0.95)\
+                    .scaleY(0.95)\
+                    .setDuration(100)\
+                    .setInterpolator(DecelerateInterpolator())\
+                    .withEndAction(RunnableArg(lambda: _on_fade_out_complete(listView, plugin_instance.id)))\
+                    .start()
+
             except Exception as e:
-                log(f"[MandreLib] Критическая ошибка при обновлении настроек: {e}")
+                log(f"[MandreLib] Anim error: {e}")
+                PluginsController.getInstance().loadPluginSettings(plugin_instance.id)
+
+        def _on_fade_out_complete(listView, pid):
+            try:
+                # 2. ПОДМЕНА ДАННЫХ
+                # Список сейчас полностью прозрачен (alpha=0)
+                PluginsController.getInstance().loadPluginSettings(pid)
+                
+                # 3. ПАУЗА ДЛЯ ЛЕЙАУТА (FIX ГЛИТЧА)
+                # Мы не запускаем анимацию появления мгновенно.
+                # Даем списку 40мс, чтобы он успел отрисовать новые элементы "за кадром".
+                # Если этого не сделать, анимация начнется со старым кадром.
+                
+                def start_fade_in():
+                    try:
+                        # Подготовка к появлению
+                        listView.setAlpha(0.0) # Гарантируем прозрачность
+                        listView.setScaleX(0.97)
+                        listView.setScaleY(0.97)
+                        listView.setTranslationY(float(AndroidUtilities.dp(10)))
+                        
+                        # 4. FADE IN (Появление)
+                        listView.animate()\
+                            .alpha(1.0)\
+                            .scaleX(1.0)\
+                            .scaleY(1.0)\
+                            .translationY(0.0)\
+                            .setDuration(200)\
+                            .setInterpolator(DecelerateInterpolator())\
+                            .start()
+                    except: pass
+
+                # Используем встроенную функцию отложенного запуска
+                run_on_ui_thread(start_fade_in, delay=150)
+
+            except Exception as e:
+                log(f"[MandreLib] Anim swap error: {e}")
+
         run_on_ui_thread(refresher)
         
     @staticmethod
