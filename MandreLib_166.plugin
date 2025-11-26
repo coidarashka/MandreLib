@@ -38,6 +38,7 @@ __icon__ = "DoubtfulCoffeeTurkey_by_fStikBot/12"
 
 # --- Импорты ---
 import traceback
+import asyncio
 import time
 import threading
 import os
@@ -47,8 +48,13 @@ import requests
 import re
 import sys
 import io
+import html
 import shlex
 import types
+import struct
+import inspect
+import functools
+from html.parser import HTMLParser  # <--- ДОБАВИТЬ ЭТО
 from datetime import datetime
 from typing import Callable, List, Optional, Dict, Any
 
@@ -62,34 +68,38 @@ from hook_utils import find_class, get_private_field
 
 # Импорты для UI, хуков и эффектов
 from org.telegram.tgnet import TLRPC
-from org.telegram.messenger import AndroidUtilities, ApplicationLoader, LocaleController, R
+from org.telegram.messenger import AndroidUtilities, ApplicationLoader, LocaleController, R, Utilities, SendMessagesHelper
 from org.telegram.ui.Components import AvatarDrawable, BackupImageView, RecyclerListView
 from org.telegram.ui.ActionBar import Theme
 from org.telegram.ui.Components import LayoutHelper
 from org.telegram.ui.ActionBar import BottomSheet, ActionBarPopupWindow
 from android.widget import LinearLayout, EditText, ScrollView, TextView, ImageView, FrameLayout
 from android.view import View, Gravity
+from android.media import ImageReader
 from android.text import TextWatcher, TextUtils
 from android.os import Handler, Looper, Build, VibrationEffect, Bundle, Environment
 from android.telephony import TelephonyManager
 from android.app import Activity
 from android.content import Intent, Context
 from android.net import Uri
+from android.hardware.display import DisplayManager, VirtualDisplay
+from android.media.projection import MediaProjectionManager
 from androidx.core.content import FileProvider
 from androidx.core.app import NotificationCompat, NotificationManagerCompat, Person
 from hook_utils import find_class
-from java.io import File, FileOutputStream
+from java.io import File, FileOutputStream, ByteArrayOutputStream
 from java import dynamic_proxy, jclass
 from java.lang import Runnable, Float as JFloat, Class as JClass, Integer as JInteger
 from java.lang import Runnable as JRunnable
 from java.util import ArrayList, Locale, TimeZone
 from com.exteragram.messenger.plugins import PluginsController
 from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
-from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuffXfermode, Rect, RectF, BitmapFactory
+from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuffXfermode, Rect, RectF, BitmapFactory, PixelFormat
 from android.graphics.drawable import GradientDrawable, ColorDrawable
 from android.animation import ObjectAnimator, AnimatorSet  # <--- Добавили AnimatorSet
 from android.view.animation import DecelerateInterpolator
-from android.util import TypedValue
+from android.util import TypedValue, DisplayMetrics
+from java.nio import ByteBuffer
 
 try:
     from android.transition import TransitionManager, TransitionSet, ChangeBounds, Fade, AutoTransition, ChangeTransform, ChangeClipBounds
@@ -112,6 +122,10 @@ except Exception:
     JAVA_EXT_CLASSES_FOUND = False
 # ----------------------------------------
 
+
+# --- Глобальное состояние для стрима ---
+_LATEST_FRAME = None
+_FRAME_LOCK = threading.Lock()
 
 # --- Глобальные переменные для библиотеки ---
 _TG_ALIAS_MAP = {}
@@ -156,6 +170,28 @@ WHEELS_PIP_CORE = {
     "pip": "https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl",
     "wheel": "https://files.pythonhosted.org/packages/0b/2c/87f3254fd8ffd29e4c02732eee68a83a1d3c346ae39bc6822dcbcb697f2b/wheel-0.45.1-py3-none-any.whl",
 }
+
+WHEELS_ASYNC_STACK = [
+    ("typing_extensions", "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl"),
+    ("idna", "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl"),
+    ("certifi", "https://files.pythonhosted.org/packages/70/7d/9bc192684cea499815ff478dfcdc13835ddf401365057044fb721ec6bddb/certifi-2025.11.12-py3-none-any.whl"),
+    ("sniffio", "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl"),
+    ("h11", "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl"),
+    ("anyio", "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl"),
+    ("httpcore", "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl"),
+    ("httpx", "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl"),
+]
+
+WHEELS_SERVER_STACK = [
+    ("click", "https://files.pythonhosted.org/packages/76/0a/18cf030fd68043ac15635597e7e649e37d88de110320820e2e6b5b08f22e/click-8.1.3-py3-none-any.whl"),
+    ("anyio", "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl"),
+    ("asgiref", "https://files.pythonhosted.org/packages/72/39/5d0c4e09e299236ba496a95822dd773e1ba49d7d38e29746d3b42a9308b1/asgiref-3.8.1-py3-none-any.whl"),
+    ("h11", "https://files.pythonhosted.org/packages/95/04/ff642e65ad6b90db43e668d70ffb6736436c7ce41fcc549f4e9472234127/h11-0.14.0-py3-none-any.whl"),
+    ("starlette", "https://files.pythonhosted.org/packages/99/22/30243323731a4d697163644df2663279354d77b22b640a4ce289a83dc99f/starlette-0.46.0-py3-none-any.whl"),
+    ("pydantic", "https://files.pythonhosted.org/packages/9f/90/1942e6127760d657d4a2d2e644b4d238307d2072b79304dfce24bc3247cd/pydantic-1.10.13-py3-none-any.whl"),
+    ("fastapi", "https://files.pythonhosted.org/packages/8f/58/2d4807857b4498b1977a0e7df4082d263b9778929622ba42be3f9d127989/fastapi-0.110.0-py3-none-any.whl"),
+    ("uvicorn", "https://files.pythonhosted.org/packages/01/28/57a26a9a9373d2c7303e8fc7df20b7df3430e06a370cf027d294be38a9b7/uvicorn-0.27.1-py3-none-any.whl"),
+]
 
 class _IOCapture:
     def __init__(self):
@@ -2839,10 +2875,884 @@ class MandreMessages:
             
         return messages
 
+
+class _AsyncLoopManager:
+    """
+    Управляет отдельным потоком для AsyncIO Event Loop.
+    Это позволяет запускать асинхронный код, не блокируя UI Telegram.
+    """
+    def __init__(self):
+        self.loop = None
+        self.thread = None
+        self.ready_event = threading.Event()
+
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self._run_loop, daemon=True, name="MandreAsyncLoop")
+        self.thread.start()
+        # Ждем, пока цикл запустится
+        self.ready_event.wait()
+
+    def _run_loop(self):
+        # Создаем и запускаем новый цикл событий в этом потоке
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.ready_event.set()
+        try:
+            self.loop.run_forever()
+        except Exception as e:
+            log(f"[MandreAsync] Loop crashed: {e}")
+
+    def submit(self, coro):
+        """Отправляет корутину в вечный цикл."""
+        if not self.loop:
+            self.start()
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+_ASYNC_MANAGER = _AsyncLoopManager()
+
+class MandreAsync:
+    """
+    Асинхронный движок MandreLib.
+    Позволяет использовать async/await и httpx.
+    """
+    @staticmethod
+    def ensure_env():
+        """Проверяет и устанавливает httpx стэк."""
+        try:
+            import httpx
+            return True
+        except ImportError:
+            BulletinHelper.show_info("Установка Async компонентов...")
+            # Используем MandrePip для тихой установки
+            _, _, site_dir, _ = _mandrelib_get_pip_dirs()
+            _mandrelib_ensure_site_on_path(site_dir)
+            
+            if not _mandrelib_bootstrap_pip():
+                BulletinHelper.show_error("Ошибка Pip Bootstrap")
+                return False
+            
+            success = True
+            for name, url in WHEELS_ASYNC_STACK:
+                # Проверяем, установлен ли уже пакет, чтобы не качать зря
+                try:
+                    __import__(name)
+                    continue
+                except ImportError:
+                    pass
+                
+                log(f"[MandreAsync] Installing {name}...")
+                code, out, err = MandrePip.install(url)
+                if code != 0:
+                    log(f"[MandreAsync] Failed to install {name}: {err}")
+                    success = False
+                    break
+            
+            if success:
+                # Сбрасываем кэш импортов
+                import importlib
+                importlib.invalidate_caches()
+                BulletinHelper.show_success("Async компоненты установлены! Перезапустите плагины.")
+            else:
+                BulletinHelper.show_error("Ошибка установки компонентов")
+            return success
+
+    @staticmethod
+    def run(coro):
+        """
+        Запускает асинхронную функцию (корутину) в фоновом потоке.
+        Пример: Mandre.Async.run(my_async_func())
+        """
+        return _ASYNC_MANAGER.submit(coro)
+
+    @staticmethod
+    def get_httpx_client():
+        """Возвращает настроенный асинхронный клиент (ленивый импорт)."""
+        try:
+            import httpx
+            return httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        except ImportError:
+            log("[MandreAsync] httpx not installed. Call ensure_env() first.")
+            return None
+
+class MandreDecorators:
+    """
+    Модуль декораторов для современного написания плагинов.
+    Поддерживает Smart Argument Parsing.
+    """
+    
+    @staticmethod
+    def command(name: str = None, aliases: List[str] = None, description: str = None):
+        """
+        Декоратор для регистрации команды.
+        Пример:
+        @Mandre.Command(aliases=["hi"])
+        def hello(self, name: str, count: int = 1): ...
+        """
+        def decorator(func):
+            setattr(func, "_mandre_handler_type", "command")
+            setattr(func, "_mandre_cmd_name", name)
+            setattr(func, "_mandre_cmd_aliases", aliases or [])
+            setattr(func, "_mandre_cmd_desc", description)
+            return func
+        return decorator
+
+    @staticmethod
+    def on_message(pattern: str = None, outgoing: bool = True, incoming: bool = False):
+        """
+        Декоратор для перехвата сообщений по Regex.
+        Пример:
+        @Mandre.OnMessage(pattern=r"hello", outgoing=True)
+        def handler(self, message): ...
+        """
+        def decorator(func):
+            setattr(func, "_mandre_handler_type", "regex")
+            setattr(func, "_mandre_regex_pattern", pattern)
+            setattr(func, "_mandre_regex_out", outgoing)
+            setattr(func, "_mandre_regex_in", incoming)
+            return func
+        return decorator
+
+# --- TEXT PARSING ENGINE (Based on Pyrogram) ---
+
+class _TextUtils:
+    @staticmethod
+    def add_surrogates(text):
+        # Telegram считает длину в UTF-16 (Java), Python в Unicode.
+        # Эмодзи в Python = 1 символ, в Java = 2 символа.
+        # Эта функция принудительно разбивает эмодзи на суррогатные пары для корректного подсчета смещения.
+        return re.sub(
+            r"[\U00010000-\U0010FFFF]",
+            lambda match: "".join(
+                chr(i) for i in struct.unpack("<HH", match.group().encode("utf-16le"))
+            ),
+            text
+        )
+
+    @staticmethod
+    def remove_surrogates(text):
+        return text.encode("utf-16", "surrogatepass").decode("utf-16")
+
+    @staticmethod
+    def replace_once(source, old, new, start):
+        return source[:start] + source[start:].replace(old, new, 1)
+
+class _MandreHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.text = ""
+        self.entities = []
+        self.tag_entities = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        entity = None
+        extra = {}
+
+        if tag in ["b", "strong"]:
+            entity = TLRPC.TL_messageEntityBold
+        elif tag in ["i", "em"]:
+            entity = TLRPC.TL_messageEntityItalic
+        elif tag == "u":
+            entity = TLRPC.TL_messageEntityUnderline
+        elif tag in ["s", "del", "strike"]:
+            entity = TLRPC.TL_messageEntityStrike
+        elif tag == "blockquote":
+            entity = TLRPC.TL_messageEntityBlockquote
+            if "expandable" in attrs:
+                # В текущей схеме TL это флаг collapsed
+                extra["collapsed"] = True 
+        elif tag == "code":
+            entity = TLRPC.TL_messageEntityCode
+        elif tag == "pre":
+            entity = TLRPC.TL_messageEntityPre
+            extra["language"] = attrs.get("language", "")
+        elif tag == "spoiler":
+            entity = TLRPC.TL_messageEntitySpoiler
+        elif tag == "a":
+            url = attrs.get("href", "")
+            if url.startswith("tg://user?id="):
+                entity = TLRPC.TL_inputMessageEntityMentionName
+                try:
+                    extra["user_id"] = TLRPC.TL_inputUser()
+                    extra["user_id"].user_id = int(url.split("=")[1])
+                    extra["user_id"].access_hash = 0 # Hash нужен реальный, но для парсинга сойдет
+                except:
+                    pass
+            else:
+                entity = TLRPC.TL_messageEntityTextUrl
+                extra["url"] = url
+        elif tag == "emoji":
+            entity = TLRPC.TL_messageEntityCustomEmoji
+            try:
+                extra["document_id"] = int(attrs.get("id", 0))
+            except:
+                pass
+        
+        if not entity:
+            return
+
+        if tag not in self.tag_entities:
+            self.tag_entities[tag] = []
+
+        # Создаем экземпляр TL класса
+        tl_obj = entity()
+        tl_obj.offset = len(self.text)
+        tl_obj.length = 0
+        
+        # Применяем доп поля
+        for k, v in extra.items():
+            setattr(tl_obj, k, v)
+            
+        self.tag_entities[tag].append(tl_obj)
+
+    def handle_data(self, data):
+        # Экранирование уже снято HTMLParser'ом
+        # Но для корректной длины в entities нам нужно учитывать суррогаты, если они есть в тексте
+        # data приходит уже с суррогатами из feed()
+        
+        for tag_list in self.tag_entities.values():
+            for entity in tag_list:
+                entity.length += len(data)
+        
+        self.text += data
+
+    def handle_endtag(self, tag):
+        try:
+            if tag in self.tag_entities and self.tag_entities[tag]:
+                self.entities.append(self.tag_entities[tag].pop())
+        except:
+            pass
+
+class MandreText:
+    """
+    Мощный парсер Markdown/HTML в TLRPC Entities.
+    Использует логику Pyrogram адаптированную под Java классы.
+    """
+    
+    # Markdown Definitions
+    BOLD_DELIM = "**"
+    ITALIC_DELIM = "__"
+    UNDERLINE_DELIM = "--"
+    STRIKE_DELIM = "~~"
+    SPOILER_DELIM = "||"
+    CODE_DELIM = "`"
+    PRE_DELIM = "```"
+    BLOCKQUOTE_DELIM = ">"
+    
+    MARKDOWN_RE = re.compile(r"({d})|(!?)\[(.+?)\]\((.+?)\)".format(
+        d="|".join([re.escape(i) for i in [PRE_DELIM, CODE_DELIM, STRIKE_DELIM, UNDERLINE_DELIM, ITALIC_DELIM, BOLD_DELIM, SPOILER_DELIM]])
+    ))
+    
+    @staticmethod
+    def parse(text: str, mode: str = "markdown") -> Dict[str, Any]:
+        """
+        Парсит текст и возвращает словарь {"message": str, "entities": ArrayList}.
+        mode: 'markdown' или 'html'
+        """
+        if mode == "markdown":
+            text = MandreText._parse_markdown_to_html(text)
+        
+        # Парсим HTML (который получился из MD или был передан)
+        parser = _MandreHTMLParser()
+        # Важно: добавляем суррогаты ДО скармливания парсеру, чтобы оффсеты считались как в Java
+        parser.feed(_TextUtils.add_surrogates(text))
+        parser.close()
+        
+        # Собираем Java ArrayList
+        j_entities = ArrayList()
+        # Сортируем по оффсету
+        sorted_entities = sorted(parser.entities, key=lambda e: e.offset)
+        
+        # Фильтруем нулевую длину и добавляем в список
+        for e in sorted_entities:
+            if e.length > 0:
+                j_entities.add(e)
+                
+        # Удаляем суррогаты из итогового текста, чтобы он был нормальным Python string
+        # (Telegram клиент сам добавит их при отправке или отрисовке)
+        final_text = _TextUtils.remove_surrogates(parser.text)
+        
+        return {"message": final_text, "entities": j_entities}
+
+    @staticmethod
+    def _parse_markdown_to_html(text: str) -> str:
+        # Предварительная обработка цитат (простая версия)
+        lines = text.splitlines()
+        new_lines = []
+        in_quote = False
+        for line in lines:
+            if line.startswith(">"):
+                clean_line = line[1:].strip()
+                if not in_quote:
+                    new_lines.append("<blockquote>" + clean_line)
+                    in_quote = True
+                else:
+                    new_lines.append(clean_line)
+            else:
+                if in_quote:
+                    new_lines[-1] += "</blockquote>"
+                    in_quote = False
+                new_lines.append(line)
+        if in_quote: new_lines[-1] += "</blockquote>"
+        text = "\n".join(new_lines)
+
+        # Основной парсинг маркеров
+        text = _TextUtils.add_surrogates(text) # Работаем в пространстве UTF-16 смещений
+        delims = set()
+        is_fixed_width = False
+        
+        # Паттерн для замены URL и EMOJI
+        URL_MARKUP = '<a href="{}">{}</a>'
+        EMOJI_MARKUP = '<emoji id="{}">{}</emoji>'
+        
+        # Вспомогательная функция для замены
+        def replace_at(s, old, new, idx):
+            return s[:idx] + s[idx:].replace(old, new, 1)
+
+        # Итерация по совпадениям
+        # (Упрощенная логика Pyrogram, так как полный перенос требует state machine)
+        # Мы используем замену "на лету", проходя по тексту
+        
+        # Вариант 2: Простой проход регулярками (менее надежно для вложенности, но работает для 90% кейсов)
+        # Используем HTML парсер для финальной сборки, поэтому тут просто конвертим MD -> HTML теги
+        
+        # Bold
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        # Italic
+        text = re.sub(r"\_\_(.+?)\_\_", r"<i>\1</i>", text)
+        # Spoiler
+        text = re.sub(r"\|\|(.+?)\|\|", r"<spoiler>\1</spoiler>", text)
+        # Strike
+        text = re.sub(r"\~\~(.+?)\~\~", r"<s>\1</s>", text)
+        # Monospace (Pre)
+        text = re.sub(r"```([\w]*)\n([\s\S]+?)\n```", r'<pre language="\1">\2</pre>', text)
+        # Monospace (Code)
+        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+        # Links [text](url)
+        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
+        # Custom Emoji [alt](tg://emoji?id=123)
+        text = re.sub(r"\[(.+?)\]\(tg://emoji\?id=(\d+)\)", r'<emoji id="\2">\1</emoji>', text)
+
+        return _TextUtils.remove_surrogates(text)
+
+# --- Глобальные переменные ---
+_LATEST_FRAME = None
+_FRAME_LOCK = threading.Lock()
+
+# Колбэк для Telegram
+class _ServerCallback(dynamic_proxy(Utilities.Callback)):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+    def run(self, arg):
+        try:
+            self.fn(arg)
+        except:
+            pass
+
+# --- Глобальное состояние для стрима ---
+_LATEST_FRAME = None
+_FRAME_LOCK = threading.Lock()
+
+# Импорты для PixelCopy (добавьте это в секцию импортов или внутри класса, если там динамическая загрузка)
+try:
+    PixelCopy = find_class("android.view.PixelCopy")
+    HandlerThread = find_class("android.os.HandlerThread")
+except:
+    PixelCopy = None
+    HandlerThread = None
+
+# Менеджер стрима (Optimized In-App Drawing)
+class _InAppStreamManager:
+    def __init__(self):
+        self.running = False
+        self.width = 480  # Снизили до 480p для производительности (достаточно для превью)
+        self.quality = 60 # Качество JPEG
+        self.thread = None
+        self._reusable_bitmap = None
+        self._handler_thread = None
+        self._pixel_copy_handler = None
+        
+        # Анти-спам логов
+        self._last_error_msg = ""
+        self._last_error_time = 0
+
+    def start(self):
+        if self.running: return
+        self.running = True
+        
+        # Инициализация потока для PixelCopy (Android 8+)
+        if Build.VERSION.SDK_INT >= 26 and PixelCopy:
+            try:
+                self._handler_thread = HandlerThread("PixelCopyHandler")
+                self._handler_thread.start()
+                self._pixel_copy_handler = Handler(self._handler_thread.getLooper())
+            except Exception as e:
+                log(f"[Stream] Failed to init PixelCopy handler: {e}")
+
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+        log("[Stream] Started (Optimized)")
+
+    def stop(self):
+        self.running = False
+        if self._handler_thread:
+            try:
+                self._handler_thread.quitSafely()
+            except:
+                self._handler_thread.quit()
+            self._handler_thread = None
+            self._pixel_copy_handler = None
+        
+        # Очистка битмапа
+        if self._reusable_bitmap and not self._reusable_bitmap.isRecycled():
+            self._reusable_bitmap.recycle()
+        self._reusable_bitmap = None
+        log("[Stream] Stopped")
+
+    def _log_error_throttled(self, msg):
+        """Пишет ошибку в лог не чаще раза в 5 секунд, чтобы не спамить"""
+        now = time.time()
+        if msg != self._last_error_msg or (now - self._last_error_time) > 5.0:
+            log(f"[Stream Error] {msg}")
+            self._last_error_msg = msg
+            self._last_error_time = now
+
+    def _loop(self):
+        while self.running:
+            t_start = time.time()
+            
+            try:
+                bmp = self._capture_ui_frame()
+                
+                if bmp:
+                    # Сжатие JPEG
+                    stream = ByteArrayOutputStream()
+                    # Используем reusable bitmap, поэтому не recycle'им его здесь!
+                    bmp.compress(Bitmap.CompressFormat.JPEG, self.quality, stream)
+                    
+                    java_bytes = stream.toByteArray()
+                    py_bytes = bytes(java_bytes)
+                    
+                    with _FRAME_LOCK:
+                        global _LATEST_FRAME
+                        _LATEST_FRAME = py_bytes
+                    
+                    stream.close()
+                    # Сбрасываем счетчик ошибок при успехе
+                    self._last_error_msg = "" 
+                
+            except Exception as e:
+                self._log_error_throttled(str(e))
+            
+            # Лимит FPS (~15 FPS достаточно для дебага)
+            dt = time.time() - t_start
+            sleep_time = max(0, 0.066 - dt) 
+            time.sleep(sleep_time)
+
+    def _capture_ui_frame(self):
+        # 1. Получаем Activity и Window
+        frag = get_last_fragment()
+        if not frag: return None
+        act = frag.getParentActivity()
+        if not act or act.isFinishing(): return None
+        
+        window = act.getWindow()
+        if not window: return None
+        
+        # Размеры окна
+        decor_view = window.getDecorView()
+        w = decor_view.getWidth()
+        h = decor_view.getHeight()
+        if w <= 0 or h <= 0: return None
+
+        # Вычисляем целевой размер
+        scale = self.width / float(w)
+        dest_w = self.width
+        dest_h = int(h * scale)
+
+        # 2. Подготовка Bitmap (Переиспользование!)
+        if (self._reusable_bitmap is None or 
+            self._reusable_bitmap.isRecycled() or 
+            self._reusable_bitmap.getWidth() != dest_w or 
+            self._reusable_bitmap.getHeight() != dest_h):
+            
+            if self._reusable_bitmap and not self._reusable_bitmap.isRecycled():
+                self._reusable_bitmap.recycle()
+            
+            try:
+                self._reusable_bitmap = Bitmap.createBitmap(dest_w, dest_h, Bitmap.Config.ARGB_8888)
+            except OutOfMemoryError:
+                self._log_error_throttled("OOM creating bitmap")
+                return None
+
+        # 3. Захват кадра (Два метода)
+        
+        # МЕТОД А: PixelCopy (Android 8+ API 26+) - БЫСТРО, не грузит UI
+        if Build.VERSION.SDK_INT >= 26 and PixelCopy and self._pixel_copy_handler:
+            result_signal = threading.Event()
+            
+            class OnCopyFinished(dynamic_proxy(PixelCopy.OnPixelCopyFinishedListener)):
+                def onPixelCopyFinished(self, result):
+                    result_signal.set()
+
+            try:
+                # PixelCopy требует Handler для колбэка
+                PixelCopy.request(window, self._reusable_bitmap, OnCopyFinished(), self._pixel_copy_handler)
+                if not result_signal.wait(0.2): # Таймаут 200мс
+                    self._log_error_throttled("PixelCopy timeout")
+                    return None
+                return self._reusable_bitmap
+            except Exception as e:
+                self._log_error_throttled(f"PixelCopy failed: {e}")
+                # Если упало, пробуем фоллбэк ниже
+        
+        # МЕТОД Б: Canvas Draw (Fallback) - МЕДЛЕННО, но работает везде
+        # Чтобы не лагало, делаем это через run_on_ui_thread, но с осторожностью
+        ui_latch = threading.Event()
+        
+        def ui_draw_task():
+            try:
+                # Используем Canvas с матрицей масштабирования, чтобы рисовать сразу в маленький битмап
+                canvas = Canvas(self._reusable_bitmap)
+                canvas.scale(scale, scale)
+                # Рисуем только DecorView (весь экран)
+                decor_view.draw(canvas)
+            except Exception as e:
+                pass
+            finally:
+                ui_latch.set()
+
+        run_on_ui_thread(ui_draw_task)
+        if ui_latch.wait(0.2):
+            return self._reusable_bitmap
+        
+        return None
+
+_STREAM_MANAGER = _InAppStreamManager()
+
+# Сервер
+class _MandreServerCore:
+    def __init__(self):
+        self.server = None
+        self.clients = set()
+        self.running = False
+        self.port = 5555
+
+    async def start(self):
+        if self.running: return
+        try:
+            self.server = await asyncio.start_server(self.handle_client, '0.0.0.0', self.port)
+            self.running = True
+            self._announce_ip()
+            async with self.server:
+                await self.server.serve_forever()
+        except Exception as e:
+            log(f"[Server] Start Error: {e}")
+            self.running = False
+
+    def _announce_ip(self):
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            run_on_ui_thread(lambda: BulletinHelper.show_success(f"API: http://{ip}:{self.port}"))
+        except:
+            pass
+
+    def stop(self):
+        if self.server:
+            self.server.close()
+            self.running = False
+        if _STREAM_MANAGER.running:
+            run_on_ui_thread(_STREAM_MANAGER.stop)
+
+    async def handle_client(self, reader, writer):
+        try:
+            line = await reader.readline()
+            if not line: return
+            parts = line.decode().strip().split()
+            if len(parts) < 2: return
+            method, full_path = parts[0], parts[1]
+            
+            path_parts = full_path.split('?', 1)
+            path = path_parts[0]
+            query_string = path_parts[1] if len(path_parts) > 1 else ""
+            query_params = {}
+            if query_string:
+                for pair in query_string.split('&'):
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        query_params[k] = v
+
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if not line or line == b'\r\n': break
+                s = line.decode().lower()
+                if s.startswith("content-length:"):
+                    content_length = int(s.split(":")[1].strip())
+
+            body_bytes = b""
+            if content_length > 0:
+                body_bytes = await reader.readexactly(content_length)
+
+            if method == 'OPTIONS':
+                await self.send_cors(writer)
+                return
+
+            # --- API ---
+
+            if path == '/api/stream':
+                await self.handle_mjpeg_stream(writer)
+                return
+            
+            elif path == '/api/stream/start' and method == 'POST':
+                _STREAM_MANAGER.start()
+                await self.resp_json(writer, {"status": "started"})
+
+            elif path == '/api/stream/stop' and method == 'POST':
+                _STREAM_MANAGER.stop()
+                await self.resp_json(writer, {"status": "stopped"})
+
+            elif path == '/api/logs/stream':
+                await self.handle_sse(writer)
+                return
+
+            elif path == '/api/status':
+                await self.resp_json(writer, {
+                    "status": "running",
+                    "version": __version__,
+                    "device": MandreDevice.get_simple_info(),
+                    "streaming": _STREAM_MANAGER.running
+                })
+
+            elif path == '/api/plugins':
+                try:
+                    pc = PluginsController.getInstance()
+                    java_list = ArrayList(pc.plugins.values())
+                    py_plugins = list(java_list.toArray())
+                    plugins_json = []
+                    for p in py_plugins:
+                        try:
+                            meta = {
+                                "id": str(p.getId()),
+                                "name": str(p.getName()),
+                                "version": str(p.getVersion() or "0.0"),
+                                "enabled": bool(p.isEnabled()),
+                                "path": str(pc.getPluginPath(p.getId()))
+                            }
+                            plugins_json.append(meta)
+                        except: pass
+                    await self.resp_json(writer, {"plugins": plugins_json})
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            elif path == '/api/plugins/download' and method == 'GET':
+                try:
+                    pid = query_params.get("id")
+                    pc = PluginsController.getInstance()
+                    if not pid or not pc.plugins.containsKey(pid):
+                        await self.resp_error(writer, "Plugin not found")
+                        return
+                    fpath = pc.getPluginPath(pid)
+                    with open(fpath, 'rb') as f: content = f.read()
+                    fname = os.path.basename(fpath)
+                    h = (f"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{fname}\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(content)}\r\n\r\n").encode()
+                    writer.write(h)
+                    writer.write(content)
+                    await writer.drain()
+                    writer.close()
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            elif path == '/api/plugins/delete' and method == 'POST':
+                try:
+                    data = json.loads(body_bytes.decode())
+                    pid = data.get("id")
+                    run_on_ui_thread(lambda: PluginsController.getInstance().deletePlugin(pid, _ServerCallback(lambda x: None)))
+                    await self.resp_json(writer, {"status": "deleted", "id": pid})
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            elif path == '/api/plugins/upload' and method == 'POST':
+                try:
+                    data = json.loads(body_bytes.decode())
+                    fname = data.get("filename", "upload.plugin")
+                    content = data.get("content")
+                    cache_dir = str(ApplicationLoader.applicationContext.getCacheDir())
+                    temp_file = os.path.join(cache_dir, fname)
+                    with open(temp_file, "w", encoding="utf-8") as f: f.write(content)
+                    
+                    def install():
+                        pc = PluginsController.getInstance()
+                        engine = pc.engines.get("python")
+                        cb = _ServerCallback(lambda e: BulletinHelper.show_error(f"Err: {e}") if e else BulletinHelper.show_success(f"Updated: {fname}"))
+                        engine.loadPluginFromFile(temp_file, None, cb)
+                    run_on_ui_thread(install)
+                    await self.resp_json(writer, {"status": "installed"})
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            elif path == '/api/deeplink' and method == 'POST':
+                try:
+                    data = json.loads(body_bytes.decode())
+                    link = data.get("url")
+                    if link.startswith("t.me"): link = "https://" + link
+                    def open_intent():
+                        try:
+                            LaunchActivity = find_class("org.telegram.ui.LaunchActivity")
+                            intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            intent.setClass(ApplicationLoader.applicationContext, LaunchActivity)
+                            ApplicationLoader.applicationContext.startActivity(intent)
+                        except: pass
+                    run_on_ui_thread(open_intent)
+                    await self.resp_json(writer, {"status": "opened"})
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            elif path == '/api/chat/send' and method == 'POST':
+                try:
+                    data = json.loads(body_bytes.decode())
+                    text = data.get("text", "")
+                    res = {"s": 0, "e": ""}
+                    evt = threading.Event()
+                    def send():
+                        try:
+                            frag = get_last_fragment()
+                            if not frag or not hasattr(frag, "getDialogId"):
+                                res["s"]=400; res["e"]="No chat"
+                                return
+                            
+                            if text:
+                                p = SendMessagesHelper.SendMessageParams()
+                                p.peer = frag.getDialogId()
+                                p.message = text
+                                SendMessagesHelper.getInstance(frag.getCurrentAccount()).sendMessage(p)
+                                res["s"]=200
+                            else:
+                                res["s"]=400
+                        except Exception as ex:
+                            res["s"]=500; res["e"]=str(ex)
+                        finally:
+                            evt.set()
+                    
+                    run_on_ui_thread(send)
+                    evt.wait(5.0)
+                    
+                    if res["s"]==200:
+                        await self.resp_json(writer, {"status":"sent"})
+                    else:
+                        await self.resp_json(writer, {"error": res["e"]})
+                except Exception as e:
+                    await self.resp_error(writer, str(e))
+
+            else:
+                writer.write(b"HTTP/1.1 404 Not Found\r\n\r\n")
+                await writer.drain()
+                writer.close()
+
+        except Exception:
+            try:
+                writer.close()
+            except:
+                pass
+
+    # --- Helpers ---
+
+    async def handle_mjpeg_stream(self, writer):
+        if not _STREAM_MANAGER.running:
+            _STREAM_MANAGER.start()
+        
+        boundary = "mandreframe"
+        writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary={boundary}\r\nCache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n".encode())
+        await writer.drain()
+        
+        try:
+            while True:
+                if not _STREAM_MANAGER.running:
+                    await asyncio.sleep(1)
+                    continue
+                
+                frame = None
+                with _FRAME_LOCK:
+                    if _LATEST_FRAME:
+                        frame = _LATEST_FRAME
+                
+                if frame:
+                    writer.write(f"--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n".encode())
+                    writer.write(frame)
+                    writer.write(b"\r\n")
+                    await writer.drain()
+                
+                await asyncio.sleep(0.05)
+        except:
+            pass
+        finally:
+            try:
+                writer.close()
+            except:
+                pass
+
+    async def handle_sse(self, writer):
+        writer.write(b"HTTP/1.1 200 OK\r\n")
+        writer.write(b"Content-Type: text/event-stream\r\n")
+        writer.write(b"Cache-Control: no-cache\r\n")
+        writer.write(b"Connection: keep-alive\r\n")
+        writer.write(b"Access-Control-Allow-Origin: *\r\n\r\n")
+        await writer.drain()
+        
+        q = asyncio.Queue()
+        self.clients.add(q)
+        try:
+            while True:
+                msg = await q.get()
+                data = f"data: {json.dumps({'m': msg, 't': time.time()})}\n\n".encode('utf-8')
+                writer.write(data)
+                await writer.drain()
+        except:
+            pass
+        finally:
+            self.clients.remove(q)
+            try:
+                writer.close()
+            except:
+                pass
+
+    async def send_cors(self, writer):
+        writer.write(b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    async def resp_json(self, writer, data):
+        b = json.dumps(data).encode()
+        writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(b)}\r\n\r\n".encode() + b)
+        await writer.drain()
+        writer.close()
+
+    async def resp_error(self, writer, msg):
+        await self.resp_json(writer, {"error": str(msg)})
+
+    def broadcast(self, msg):
+        if not self.clients or not _ASYNC_MANAGER.loop: return
+        for q in list(self.clients):
+            try:
+                _ASYNC_MANAGER.loop.call_soon_threadsafe(q.put_nowait, msg)
+            except:
+                pass
+
+_MANDRE_SERVER = _MandreServerCore()
+
 class Mandre:
     UI = MandreUI
     Data = MandreData
     TTS = MandreTTS
+    Text = MandreText
     Auth = MandreAuth
     Share = MandreShare
     Device = MandreDevice
@@ -2850,11 +3760,243 @@ class Mandre:
     Settings = MandreSettings
     Suggestions = MandreSuggestions
     Messages = MandreMessages
-    SheetController = MandreSheetContrl 
+    SheetController = MandreSheetContrl
+    Async = MandreAsync
+    Decorators = MandreDecorators
+    Command = MandreDecorators.command      # Алиас для удобства @Mandre.Command
+    OnMessage = MandreDecorators.on_message # Алиас для удобства @Mandre.OnMessage
     # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
 
     _DB_CACHE_STORAGE = None
     _DB_CACHE_DB = None
+    _DECORATED_PLUGINS = {}
+
+    class Server:
+        """
+        Управление локальным сервером разработки.
+        """
+        @staticmethod
+        def start():
+            """Запускает сервер на порту 5555"""
+            Mandre.Async.run(_MANDRE_SERVER.start())
+            # Получаем IP
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+                BulletinHelper.show_success(f"Server: http://{ip}:5555")
+            except:
+                BulletinHelper.show_success("Server started on port 5555")
+
+        @staticmethod
+        def stop():
+            _MANDRE_SERVER.stop()
+            BulletinHelper.show_info("Server stopped")
+
+    @staticmethod
+    def initialise(plugin_instance: BasePlugin):
+        """
+        Магический метод. Сканирует плагин на наличие декораторов, 
+        регистрирует хуки и активирует Smart Parsing.
+        Нужно вызывать один раз в on_plugin_load.
+        """
+        try:
+            plugin_id = plugin_instance.id
+            handlers = []
+            
+            # 1. Сканируем методы класса через inspect
+            for name, method in inspect.getmembers(plugin_instance, predicate=inspect.ismethod):
+                handler_type = getattr(method, "_mandre_handler_type", None)
+                
+                if handler_type == "command":
+                    cmd_name = getattr(method, "_mandre_cmd_name") or name
+                    aliases = getattr(method, "_mandre_cmd_aliases", [])
+                    handlers.append({
+                        "type": "command",
+                        "name": cmd_name.lower(),
+                        "aliases": [a.lower() for a in aliases],
+                        "method": method
+                    })
+                    
+                elif handler_type == "regex":
+                    handlers.append({
+                        "type": "regex",
+                        "pattern": getattr(method, "_mandre_regex_pattern"),
+                        "out": getattr(method, "_mandre_regex_out"),
+                        "in": getattr(method, "_mandre_regex_in"),
+                        "method": method
+                    })
+
+            if handlers:
+                Mandre._DECORATED_PLUGINS[plugin_id] = handlers
+                
+                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                
+                # 1. Сохраняем ссылку на оригинальный метод (если он был переопределен юзером)
+                # Важно: берем метод класса, чтобы получить unbound function, или bound method экземпляра
+                original_hook = getattr(plugin_instance, "on_send_message_hook", None)
+                
+                # 2. Создаем обертку
+                def dispatch_wrapper(account, params):
+                    # Сначала декораторы
+                    res = Mandre._dispatch_smart_handlers(plugin_instance, params)
+                    if res: return res
+                    
+                    # Если декораторы не сработали, вызываем оригинальный код
+                    # Проверяем, чтобы это не была та же самая функция (рекурсия)
+                    if original_hook and original_hook.__name__ != "dispatch_wrapper":
+                        try: 
+                            return original_hook(account, params)
+                        except: 
+                            return HookResult()
+                    return HookResult()
+                
+                # 3. СНАЧАЛА Подменяем метод у экземпляра плагина
+                plugin_instance.on_send_message_hook = dispatch_wrapper
+                
+                # 4. И ТОЛЬКО ПОТОМ регистрируем хук в системе
+                # Теперь система увидит наш dispatch_wrapper
+                plugin_instance.add_on_send_message_hook(priority=100)
+                
+                log(f"[MandreLib] Initialised {len(handlers)} smart handlers for {plugin_id}")
+        
+        except Exception as e:
+            log(f"[MandreLib] Init error for {plugin_instance.id}: {traceback.format_exc()}")
+
+    @staticmethod
+    def _dispatch_smart_handlers(plugin, params) -> Optional[HookResult]:
+        try:
+            # ИСПРАВЛЕНИЕ: params это Java объект, берем атрибут напрямую
+            msg = getattr(params, "message", None)
+            
+            # Если сообщения нет или это не строка (например, файл без подписи), выходим
+            if not msg or not isinstance(msg, str): return None
+            
+            handlers = Mandre._DECORATED_PLUGINS.get(plugin.id, [])
+            
+            if _mandrelib_instance:
+                prefix = _mandrelib_instance.get_setting("command_prefix", ".")
+            else:
+                prefix = "."
+            
+            for h in handlers:
+                # --- ЛОГИКА КОМАНД ---
+                if h["type"] == "command":
+                    if not msg.startswith(prefix): continue
+                    
+                    parts = msg[len(prefix):].split(' ', 1)
+                    cmd_trigger = parts[0].lower()
+                    args_str = parts[1] if len(parts) > 1 else ""
+                    
+                    if cmd_trigger == h["name"] or cmd_trigger in h["aliases"]:
+                        return Mandre._execute_smart_command(h["method"], args_str, params)
+
+                # --- ЛОГИКА REGEX ---
+                elif h["type"] == "regex":
+                    if not h["out"]: continue
+                    
+                    pattern = h["pattern"]
+                    if pattern and re.search(pattern, msg):
+                        try:
+                            res = h["method"](params)
+                            if res is False: return HookResult(strategy=HookStrategy.CANCEL)
+                            if res: return res
+                        except Exception as e:
+                            log(f"[MandreLib] Regex handler error: {e}")
+
+            return None
+        except Exception as e:
+            log(f"[MandreLib] Dispatch error: {e}")
+            return None
+
+    @staticmethod
+    def _execute_smart_command(method, args_str: str, params) -> HookResult:
+        """
+        SMART ARGUMENT PARSER
+        Анализирует сигнатуру функции и преобразует строку аргументов в типы Python.
+        """
+        try:
+            sig = inspect.signature(method)
+            bound_args = {}
+            
+            # Используем shlex для умного разбиения кавычек: .cmd "hello world" 123
+            try:
+                split_args = shlex.split(args_str)
+            except:
+                split_args = args_str.split()
+
+            iterator = iter(split_args)
+            
+            for name, param in sig.parameters.items():
+                # 1. Пропускаем 'self' (уже привязан)
+                if name == "self": continue
+                
+                # 2. Специальный аргумент 'message' или 'msg' или 'params' -> передаем сырой объект
+                if name in ("message", "msg", "params", "ctx"):
+                    bound_args[name] = params
+                    continue
+
+                # 3. Если аргументов не осталось
+                try:
+                    val_str = next(iterator)
+                except StopIteration:
+                    if param.default != inspect.Parameter.empty:
+                        bound_args[name] = param.default
+                        continue
+                    else:
+                        # Аргумент обязателен, но его нет -> Ошибка или Help
+                        Mandre.Notification.show_simple("Ошибка", f"Не хватает аргумента: {name}")
+                        return HookResult(strategy=HookStrategy.CANCEL)
+
+                # 4. CASTING TYPES
+                annotation = param.annotation
+                if annotation != inspect.Parameter.empty:
+                    try:
+                        if annotation == int:
+                            bound_args[name] = int(val_str)
+                        elif annotation == float:
+                            bound_args[name] = float(val_str)
+                        elif annotation == bool:
+                            # Умный булеан: 'true', '1', 'on' -> True
+                            bound_args[name] = val_str.lower() in ("true", "1", "yes", "on", "t")
+                        else:
+                            bound_args[name] = val_str
+                    except ValueError:
+                        Mandre.Notification.show_simple("Ошибка типа", f"Аргумент '{name}' должен быть {annotation.__name__}")
+                        return HookResult(strategy=HookStrategy.CANCEL)
+                else:
+                    # Без аннотации - просто строка
+                    bound_args[name] = val_str
+
+            # Вызов метода
+            res = method(**bound_args)
+            
+            # Обработка результата
+            if isinstance(res, HookResult): return res
+            if isinstance(res, str):
+                # Умная обработка Markdown
+                # Если строка содержит спецсимволы, пробуем распарсить
+                if any(c in res for c in "*_`[<"):
+                    try:
+                        parsed = Mandre.Text.parse(res, mode="markdown")
+                        params.message = parsed["message"]
+                        params.entities = parsed["entities"]
+                    except Exception as e:
+                        log(f"[MandreLib] Markdown auto-parse error: {e}")
+                        params.message = res
+                else:
+                    params.message = res
+                    
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            
+            return HookResult(strategy=HookStrategy.CANCEL)
+
+        except Exception as e:
+            log(f"[MandreLib SmartArgs] Error: {traceback.format_exc()}")
+            Mandre.Notification.show_simple("System Error", str(e))
+            return HookResult(strategy=HookStrategy.CANCEL)
     
     @staticmethod
     def add_tg_alias(path: str, callback: Callable[[Intent], None]):
@@ -3340,6 +4482,27 @@ class _ActivityResultHook(MethodHook):
                 self.plugin.unhook_method(self.plugin._activity_hook)
                 self.plugin._activity_hook = None
 
+class _AppLogHook(MethodHook):
+    def before_hooked_method(self, param):
+        try:
+            msg = str(param.args[0])
+            # level = param.args[2] # 0=D, 1=I, 2=W, 3=E
+            
+            # Отправляем на сервер
+            # Добавим подсветку для важных тегов
+            if "[MandreLib]" in msg: msg = f"🔥 {msg}"
+            elif "[MandreAsync]" in msg: msg = f"⚡ {msg}"
+            elif "Command" in msg and "plugin" in msg: msg = f"🎮 {msg}"
+            
+            # Можно добавить префикс уровня лога, если хочешь
+            # levels = {0: "D", 1: "I", 2: "W", 3: "E"}
+            # lvl = levels.get(int(param.args[2]), "?")
+            # msg = f"[{lvl}] {msg}"
+
+            _MANDRE_SERVER.broadcast(msg)
+        except:
+            pass
+
 class MandreLibPlugin(BasePlugin):
     def __init__(self):
         super().__init__()
@@ -3351,6 +4514,24 @@ class MandreLibPlugin(BasePlugin):
         _mandrelib_instance = self
         self.log(f"Библиотека '{self.name} v{self.version}' загружена.")
         _ensure_tg_hook(self)
+
+        # --- НОВЫЙ ХУК ЛОГОВ ---
+        try:
+            AppUtils = find_class("com.exteragram.messenger.utils.AppUtils")
+            if AppUtils:
+                String = find_class("java.lang.String")
+                Throwable = find_class("java.lang.Throwable")
+                Integer = find_class("java.lang.Integer")
+                
+                method = AppUtils.getClass().getDeclaredMethod(
+                    "logInternal", String, Throwable, Integer.TYPE
+                )
+                method.setAccessible(True)
+                self.hook_method(method, _AppLogHook())
+                self.log("[MandreLib] Системный хук логов активирован.")
+        except Exception as e:
+            self.log(f"[MandreLib] Ошибка хука логов: {e}")
+        # -----------------------
         
     def on_plugin_unload(self):
         global _mandrelib_instance
