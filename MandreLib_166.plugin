@@ -26,10 +26,10 @@
 #   ( o.o )
 #    > ^ <
 # Этот котик проверил код, и он идеален. Мяу!
-# Переписана система локализации: удален старый мусор, добавлена поддержка TARGETlang и авто-рефреш.
+# кангелочек Я И ЕСТЬ ИНТЕРНЕТ АНГЕЛ УВЕРЯЮ...... кангел это чеп такое? братан я ввижу внизу кастыль n\n\  а не проще просто """  текст """  ?!?!?
 __id__ = "mandre_lib"
 __name__ = "MandreLib"
-__version__ = "1.7" 
+__version__ = "1.6.6"
 __author__ = """MandreAI & СвагаНеТута
 @swagnonher & @MandreAI_bot"""
 __description__ = "Бибилотека для создания плагинов \n\n Документация: https://manderelib.vercel.app/"
@@ -38,7 +38,6 @@ __icon__ = "DoubtfulCoffeeTurkey_by_fStikBot/12"
 
 # --- Импорты ---
 import traceback
-import asyncio
 import time
 import threading
 import os
@@ -48,13 +47,8 @@ import requests
 import re
 import sys
 import io
-import html
 import shlex
 import types
-import struct
-import inspect
-import functools
-from html.parser import HTMLParser  # <--- ДОБАВИТЬ ЭТО
 from datetime import datetime
 from typing import Callable, List, Optional, Dict, Any
 
@@ -63,50 +57,37 @@ from client_utils import get_last_fragment, get_messages_controller, get_user_co
 from android_utils import run_on_ui_thread, log, OnClickListener
 from ui.alert import AlertDialogBuilder
 from ui.bulletin import BulletinHelper
-from ui.settings import Header, Text, Divider, Input, Switch, Selector
+from ui.settings import Header, Text, Divider, Input
 from hook_utils import find_class, get_private_field
 
 # Импорты для UI, хуков и эффектов
 from org.telegram.tgnet import TLRPC
-from org.telegram.messenger import AndroidUtilities, ApplicationLoader, LocaleController, R, Utilities, SendMessagesHelper
+from org.telegram.messenger import AndroidUtilities, ApplicationLoader, LocaleController, R
 from org.telegram.ui.Components import AvatarDrawable, BackupImageView, RecyclerListView
 from org.telegram.ui.ActionBar import Theme
-from org.telegram.ui.Components import LayoutHelper
-from org.telegram.ui.ActionBar import BottomSheet, ActionBarPopupWindow
 from android.widget import LinearLayout, EditText, ScrollView, TextView, ImageView, FrameLayout
 from android.view import View, Gravity
-from android.media import ImageReader
 from android.text import TextWatcher, TextUtils
 from android.os import Handler, Looper, Build, VibrationEffect, Bundle, Environment
 from android.telephony import TelephonyManager
 from android.app import Activity
 from android.content import Intent, Context
 from android.net import Uri
-from android.hardware.display import DisplayManager, VirtualDisplay
-from android.media.projection import MediaProjectionManager
 from androidx.core.content import FileProvider
 from androidx.core.app import NotificationCompat, NotificationManagerCompat, Person
 from hook_utils import find_class
-from java.io import File, FileOutputStream, ByteArrayOutputStream
-from java import dynamic_proxy, jclass
+from java.io import File, FileOutputStream
+from java import dynamic_proxy
 from java.lang import Runnable, Float as JFloat, Class as JClass, Integer as JInteger
 from java.lang import Runnable as JRunnable
 from java.util import ArrayList, Locale, TimeZone
 from com.exteragram.messenger.plugins import PluginsController
 from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
-from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuffXfermode, Rect, RectF, BitmapFactory, PixelFormat
+from android.graphics import Color, Bitmap, Canvas, Paint, PorterDuff, PorterDuffXfermode, Rect, RectF, BitmapFactory
 from android.graphics.drawable import GradientDrawable, ColorDrawable
-from android.animation import ObjectAnimator, AnimatorSet  # <--- Добавили AnimatorSet
+from android.animation import ObjectAnimator
 from android.view.animation import DecelerateInterpolator
-from android.util import TypedValue, DisplayMetrics
-from java.nio import ByteBuffer
 
-try:
-    from android.transition import TransitionManager, TransitionSet, ChangeBounds, Fade, AutoTransition, ChangeTransform, ChangeClipBounds
-    from android.view import ViewGroup
-    from android.view.animation import AccelerateDecelerateInterpolator
-except ImportError:
-    pass
 # --- Новые импорты для TTS, аутентификации и уведомлений ---
 try:
     TextToSpeech = find_class("android.speech.tts.TextToSpeech")
@@ -123,10 +104,6 @@ except Exception:
 # ----------------------------------------
 
 
-# --- Глобальное состояние для стрима ---
-_LATEST_FRAME = None
-_FRAME_LOCK = threading.Lock()
-
 # --- Глобальные переменные для библиотеки ---
 _TG_ALIAS_MAP = {}
 _tg_hook_installed = False
@@ -142,10 +119,6 @@ _DATA_LOCK = threading.Lock()
 _PERSISTENT_PLUGINS = set()
 _RESTORING_PLUGINS = set()
 
-# --- Глобальные переменные для Suggestions ---
-_SUGGESTIONS_REGISTRY = {}
-_suggestions_hook_installed = False
-
 _BOTTOM_BAR_CONFIGS = {}
 _bottom_bar_hooks_installed = False
 
@@ -153,7 +126,7 @@ _COMMAND_LOCK = threading.Lock()
 _COMMANDS = {}
 _mandrelib_instance = None
 
-# Старая переменная _LOCALIZATIONS удалена. Используем только кэш.
+_LOCALIZATIONS = {}
 _LOCALIZATION_CACHE = {}
 
 FILE_PICK_REQUEST_CODE = 42069
@@ -170,28 +143,6 @@ WHEELS_PIP_CORE = {
     "pip": "https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl",
     "wheel": "https://files.pythonhosted.org/packages/0b/2c/87f3254fd8ffd29e4c02732eee68a83a1d3c346ae39bc6822dcbcb697f2b/wheel-0.45.1-py3-none-any.whl",
 }
-
-WHEELS_ASYNC_STACK = [
-    ("typing_extensions", "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl"),
-    ("idna", "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl"),
-    ("certifi", "https://files.pythonhosted.org/packages/70/7d/9bc192684cea499815ff478dfcdc13835ddf401365057044fb721ec6bddb/certifi-2025.11.12-py3-none-any.whl"),
-    ("sniffio", "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl"),
-    ("h11", "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl"),
-    ("anyio", "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl"),
-    ("httpcore", "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl"),
-    ("httpx", "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl"),
-]
-
-WHEELS_SERVER_STACK = [
-    ("click", "https://files.pythonhosted.org/packages/76/0a/18cf030fd68043ac15635597e7e649e37d88de110320820e2e6b5b08f22e/click-8.1.3-py3-none-any.whl"),
-    ("anyio", "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl"),
-    ("asgiref", "https://files.pythonhosted.org/packages/72/39/5d0c4e09e299236ba496a95822dd773e1ba49d7d38e29746d3b42a9308b1/asgiref-3.8.1-py3-none-any.whl"),
-    ("h11", "https://files.pythonhosted.org/packages/95/04/ff642e65ad6b90db43e668d70ffb6736436c7ce41fcc549f4e9472234127/h11-0.14.0-py3-none-any.whl"),
-    ("starlette", "https://files.pythonhosted.org/packages/99/22/30243323731a4d697163644df2663279354d77b22b640a4ce289a83dc99f/starlette-0.46.0-py3-none-any.whl"),
-    ("pydantic", "https://files.pythonhosted.org/packages/9f/90/1942e6127760d657d4a2d2e644b4d238307d2072b79304dfce24bc3247cd/pydantic-1.10.13-py3-none-any.whl"),
-    ("fastapi", "https://files.pythonhosted.org/packages/8f/58/2d4807857b4498b1977a0e7df4082d263b9778929622ba42be3f9d127989/fastapi-0.110.0-py3-none-any.whl"),
-    ("uvicorn", "https://files.pythonhosted.org/packages/01/28/57a26a9a9373d2c7303e8fc7df20b7df3430e06a370cf027d294be38a9b7/uvicorn-0.27.1-py3-none-any.whl"),
-]
 
 class _IOCapture:
     def __init__(self):
@@ -355,18 +306,16 @@ def _mandrelib_pip_normalize(argv: list, site_dir: str, settings_getter) -> list
     return [cmd] + flags + rest
 
 class MandrePip:
-    """Internal PIP Wrapper. Use MandreInstall for public API."""
     @staticmethod
-    def ensure_ready(silent: bool = False) -> bool:
+    def ensure_ready() -> bool:
         _, _, site_dir, _ = _mandrelib_get_pip_dirs()
         _mandrelib_ensure_site_on_path(site_dir)
         ok = _mandrelib_bootstrap_pip()
         try:
-            if not silent:
-                if ok:
-                    BulletinHelper.show_success("MandreLib: pip готов", get_last_fragment())
-                else:
-                    BulletinHelper.show_error("MandreLib: не удалось инициализировать pip", get_last_fragment())
+            if ok:
+                BulletinHelper.show_success("MandreLib: pip готов", get_last_fragment())
+            else:
+                BulletinHelper.show_error("MandreLib: не удалось инициализировать pip", get_last_fragment())
         except Exception:
             pass
         return ok
@@ -395,60 +344,34 @@ class MandrePip:
 
     @staticmethod
     def import_module(mod: str):
-        _ = MandrePip.ensure_ready(silent=True)
+        _ = MandrePip.ensure_ready()
         _mandrelib_ensure_site_on_path(MandrePip.site_dir())
         return __import__(mod)
 
 class MandreInstall:
+    """Tiny helper to install one or many none-any packages with a single call.
+    Usage: MandreInstall(["pyrogram", "typing_extensions"]).
     """
-    Unified Installer and Status Checker.
-    Usage:
-      - Check status:  MandreInstall('check_status') -> bool
-      - Install lib:   MandreInstall('requests')
-      - Install file:  MandreInstall('http://site.com/lib.whl')
-      - Multi install: MandreInstall(['lib1', 'lib2'])
-    """
-    def __new__(cls, target):
-        # 1. Check Status Logic
-        if target == "check_status":
-            # Returns True if PIP is ready/bootstrapped, False otherwise
-            # Silent mode avoids UI popup during check
-            return MandrePip.ensure_ready(silent=True)
-
-        # 2. Install Logic
+    def __init__(self, specs):
         try:
-            # Ensure bootstrap before trying to install
-            if not MandrePip.ensure_ready(silent=True):
-                log("[MandreInstall] Cannot install: PIP not ready.")
-                return None
-
-            if isinstance(target, (list, tuple)):
-                for s in target:
-                    MandreInstall._install_one(s)
-            else:
-                MandreInstall._install_one(target)
-        except Exception as e:
-            log(f"[MandreInstall] Error: {e}")
-        
-        return None
-
-    @staticmethod
-    def _install_one(spec):
-        try:
-            # Try to import first to skip installation
-            spec_str = str(spec)
-            # Crude check: if it looks like a url or path, don't try to import as module name
-            if not spec_str.endswith(".whl") and "://" not in spec_str and "/" not in spec_str:
-                 MandrePip.import_module(spec_str)
-                 return
+            if isinstance(specs, (list, tuple)):
+                for s in specs:
+                    try:
+                        MandrePip.import_module(s)
+                        continue
+                    except Exception:
+                        pass
+                    try:
+                        MandrePip.install(str(s))
+                    except Exception:
+                        pass
+            elif isinstance(specs, str):
+                try:
+                    MandrePip.import_module(specs)
+                except Exception:
+                    MandrePip.install(specs)
         except Exception:
             pass
-        
-        # Proceed to install
-        try:
-            MandrePip.install(str(spec))
-        except Exception as e:
-            log(f"[MandreInstall] Install failed for {spec}: {e}")
 
 class MandreWeb:
     @staticmethod
@@ -1045,435 +968,6 @@ class MandreDevice:
         except Exception as e:
             return f"Ошибка получения информации: {e}"
 
-class MandreSettings:
-    """
-    HTML‑подобный билдер настроек для плагинов.
-    """
-
-    @staticmethod
-    def render(plugin: BasePlugin, spec: Any) -> List[Any]:
-        try:
-            if isinstance(spec, str):
-                elements = MandreSettings._parse_html(spec)
-            elif isinstance(spec, list):
-                elements = spec
-            elif isinstance(spec, dict):
-                elements = spec.get("elements", [])
-            else:
-                return [Header(text="Ошибка: Неверный формат спецификации")]
-
-            # Авто‑перевод кастомных строк из разметки
-            try:
-                strings_to_translate = MandreSettings._collect_strings_for_translation(elements)
-                if strings_to_translate:
-                    # Запускаем в фоне, чтобы не фризить рендер, если перевод нужен
-                    run_on_queue(lambda: Mandre.auto_translate_inline_strings(plugin, strings_to_translate))
-            except Exception:
-                log(f"[MandreSettings] auto-translate prepare error: {traceback.format_exc()}")
-
-            result = []
-            for el in elements:
-                item = MandreSettings._element_to_item(plugin, el)
-                if item is not None:
-                    result.extend(item if isinstance(item, list) else [item])
-            return result or [Header(text="Пустые настройки")]
-        except Exception:
-            log(f"[MandreSettings] render error: {traceback.format_exc()}")
-            return [Header(text="Ошибка рендера настроек")]
-
-    @staticmethod
-    def _parse_html(markup: str) -> List[Dict[str, Any]]:
-        import re as _re
-        elements: List[Dict[str, Any]] = []
-        s = markup.replace("\r", "")
-        paired = _re.compile(r"<([a-zA-Z_][\w\-]*)\s*([^>]*)>(.*?)</\1>", _re.S)
-        single = _re.compile(r"<([a-zA-Z_][\w\-]*)\s*([^>]*)/>")
-
-        def parse_attrs(attr_str: str) -> Dict[str, Any]:
-            attrs: Dict[str, Any] = {}
-            if attr_str:
-                for m in _re.finditer(r"([\w\-]+)\s*=\s*\"(.*?)\"", attr_str):
-                    attrs[m.group(1)] = m.group(2)
-                for m in _re.finditer(r"([\w\-]+)\s*=\s*([^\s\"]+)", attr_str):
-                    if m.group(1) not in attrs:
-                        attrs[m.group(1)] = m.group(2)
-            return attrs
-
-        for m in paired.finditer(s):
-            tag = m.group(1).lower()
-            attrs = parse_attrs(m.group(2) or "")
-            inner = (m.group(3) or "").strip()
-            if inner and "text" not in attrs:
-                attrs["text"] = inner
-            elements.append({"type": tag, **attrs})
-
-        for m in single.finditer(s):
-            tag = m.group(1).lower()
-            attrs = parse_attrs(m.group(2) or "")
-            elements.append({"type": tag, **attrs})
-
-        return elements
-
-    @staticmethod
-    def _element_to_item(plugin: BasePlugin, el: Dict[str, Any]):
-        t = (el.get("type") or "").lower()
-        if not t:
-            return None
-
-        if t in ("screen", "section"):
-            title = el.get("text") or el.get("title")
-            title = Mandre.t(plugin, title) if title else None
-            return Header(text=title) if title else None
-
-        if t == "header":
-            return Header(text=Mandre.t(plugin, el.get("text", "")))
-
-        if t == "divider":
-            return Divider(text=Mandre.t(plugin, el.get("text"))) if el.get("text") else Divider()
-
-        if t == "text":
-            on_click = MandreSettings._resolve_on_click(plugin, el.get("on_click"))
-            return Text(text=Mandre.t(plugin, el.get("text", "")), icon=el.get("icon"), accent=MandreSettings._to_bool(el.get("accent")), red=MandreSettings._to_bool(el.get("red")), on_click=on_click)
-
-        if t == "button":
-            on_click = MandreSettings._resolve_on_click(plugin, el.get("on_click"))
-            return Text(text=Mandre.t(plugin, el.get("text", "Кнопка")), icon=el.get("icon"), accent=True, on_click=on_click)
-
-        if t == "input":
-            key = el.get("key") or el.get("name")
-            default_val = MandreSettings._default_from_plugin(plugin, key, el.get("default"))
-            return Input(key=key, text=Mandre.t(plugin, el.get("text", key or "")), subtext=Mandre.t(plugin, el.get("subtext")) if el.get("subtext") else None, icon=el.get("icon"), default=str(default_val) if default_val is not None else "", on_change=MandreSettings._wrap_on_change(plugin, key))
-
-        if t == "switch":
-            key = el.get("key") or el.get("name")
-            default_bool = bool(MandreSettings._default_from_plugin(plugin, key, el.get("default")))
-            return Switch(key=key, text=Mandre.t(plugin, el.get("text", key or "")), subtext=Mandre.t(plugin, el.get("subtext")) if el.get("subtext") else None, icon=el.get("icon"), default=default_bool, on_change=MandreSettings._wrap_on_change(plugin, key))
-
-        if t == "selector":
-            key = el.get("key") or el.get("name")
-            items_list = [x.strip() for x in str(el.get("items") or "").split(",") if x.strip()]
-            try:
-                items_list = [Mandre.t(plugin, x) for x in items_list]
-            except Exception:
-                pass
-            default_idx = MandreSettings._default_from_plugin(plugin, key, el.get("default"))
-            try:
-                default_idx = int(default_idx) if default_idx is not None else 0
-            except Exception:
-                default_idx = 0
-            return Selector(key=key, text=Mandre.t(plugin, el.get("text", key or "")), items=items_list, default=default_idx, icon=el.get("icon"), on_change=MandreSettings._wrap_on_change(plugin, key))
-
-        if t in ("image", "media"):
-            # Медиа‑теги больше не поддерживаются
-            return None
-
-        return Text(text=f"{t}: {el.get('text', '')}")
-
-    @staticmethod
-    def _to_bool(v: Any) -> bool:
-        if v is True: return True
-        if v is False or v is None: return False
-        return str(v).strip().lower() in ("1", "true", "yes", "on", "accent")
-
-    @staticmethod
-    def _to_int(v: Any, default: int = 0) -> int:
-        try: return int(str(v).strip())
-        except Exception: return default
-
-    @staticmethod
-    def _default_from_plugin(plugin: BasePlugin, key: Optional[str], declared_default: Any) -> Any:
-        if not key: return declared_default
-        if declared_default is None or (isinstance(declared_default, str) and declared_default.lower() == "auto"):
-            try: return plugin.get_setting(key, None)
-            except Exception: return None
-        return declared_default
-
-    @staticmethod
-    def _wrap_on_change(plugin: BasePlugin, key: Optional[str]):
-        if not key: return None
-        def handler(value):
-            try: plugin.set_setting(key, value)
-            except Exception: log(f"[MandreSettings] set_setting failed for {key}")
-            Mandre.apply_and_refresh_settings(plugin)
-        return handler
-
-    @staticmethod
-    def _resolve_on_click(plugin: BasePlugin, ref: Optional[str]):
-        if not ref: return None
-        ref = str(ref).strip()
-        if hasattr(plugin, ref) and callable(getattr(plugin, ref)):
-            fn = getattr(plugin, ref)
-            return lambda v: fn()
-        if ref.startswith("tg://"):
-            def open_alias(_):
-                try:
-                    intent = Intent(Intent.ACTION_VIEW, Uri.parse(ref))
-                    fragment = get_last_fragment()
-                    activity = fragment.getParentActivity() if fragment else None
-                    if activity: activity.startActivity(intent)
-                except Exception:
-                    log(f"[MandreSettings] tg alias open error: {traceback.format_exc()}")
-            return open_alias
-        return None
-
-    @staticmethod
-    def _collect_strings_for_translation(elements: List[Dict[str, Any]]) -> List[str]:
-        strings: List[str] = []
-        for el in elements:
-            for k in ("text", "subtext", "title"):
-                v = el.get(k)
-                if isinstance(v, str) and v.strip():
-                    strings.append(v.strip())
-            items_raw = el.get("items")
-            if items_raw:
-                try:
-                    if isinstance(items_raw, str):
-                        items = [x.strip() for x in items_raw.split(',') if x.strip()]
-                    elif isinstance(items_raw, list):
-                        items = [str(x).strip() for x in items_raw if str(x).strip()]
-                    else:
-                        items = []
-                    strings.extend(items)
-                except Exception:
-                    pass
-        try:
-            uniq: List[str] = []
-            seen = set()
-            for s in strings:
-                if s not in seen:
-                    uniq.append(s)
-                    seen.add(s)
-            return uniq
-        except Exception:
-            return strings
-
-    # --- Chat preview block integration (scoped to plugin id) ---
-    _custom_blocks: Dict[str, List[Any]] = {}
-
-    @staticmethod
-    def add_chat_preview(plugin: BasePlugin, messages: List[Dict[str, Any]]):
-        try:
-            pid = getattr(plugin, 'id', None) or getattr(plugin, 'getId', lambda: None)()
-            if not pid:
-                pid = getattr(plugin, '__id__', None)
-            if not pid:
-                return
-            # Replace any previous builder to avoid duplication on reloads
-            MandreSettings._custom_blocks[pid] = []
-
-            # Auto-translate message texts so preview adapts to UI language
-            try:
-                texts = []
-                for m in messages or []:
-                    txt = m.get('text')
-                    if isinstance(txt, str) and txt.strip():
-                        texts.append(txt.strip())
-                if texts:
-                    def _translate_and_refresh():
-                        try:
-                            Mandre.auto_translate_inline_strings(plugin, texts)
-                        except Exception:
-                            pass
-                        try:
-                            run_on_ui_thread(lambda: Mandre.apply_and_refresh_settings(plugin))
-                        except Exception:
-                            pass
-                    run_on_queue(_translate_and_refresh)
-            except Exception:
-                pass
-
-            def _builder(ctx):
-                try:
-                    from android.widget import LinearLayout, ScrollView
-                    from android.view import ViewGroup
-                    from org.telegram.messenger import AndroidUtilities, UserConfig, MessageObject, MessagesController
-                    from org.telegram.tgnet import TLRPC
-                    from org.telegram.ui.Cells import ChatMessageCell
-                    from org.telegram.messenger import ImageLocation
-                    from org.telegram.ui.Components import BackupImageView, AvatarDrawable
-                    import time, random
-                    from com.exteragram.messenger.plugins import PluginsController
-
-                    scroll = ScrollView(ctx)
-                    content = LinearLayout(ctx)
-                    content.setOrientation(LinearLayout.VERTICAL)
-                    try:
-                        content.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12), AndroidUtilities.dp(12))
-                    except Exception:
-                        pass
-                    scroll.addView(content)
-
-                    account = 0
-                    try:
-                        account = UserConfig.getSelectedAccount() if hasattr(UserConfig, 'getSelectedAccount') else UserConfig.getInstance(0).currentAccount
-                    except Exception:
-                        pass
-
-                    # Respect plugin toggle: preview_enabled
-                    try:
-                        enabled = PluginsController.getInstance().getPluginSettingBoolean(pid, "preview_enabled", True)
-                        if not enabled:
-                            # Return an empty spacer to keep layout sane
-                            spacer = LinearLayout(ctx)
-                            return spacer
-                    except Exception:
-                        pass
-
-                    for idx, m in enumerate(messages or []):
-                        row = LinearLayout(ctx)
-                        row.setOrientation(LinearLayout.HORIZONTAL)
-                        try:
-                            lp_row = ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                            lp_row.topMargin = AndroidUtilities.dp(8)
-                            lp_row.bottomMargin = AndroidUtilities.dp(8)
-                            row.setLayoutParams(lp_row)
-                        except Exception:
-                            pass
-
-                        ava = BackupImageView(ctx)
-                        try:
-                            size = AndroidUtilities.dp(42)
-                            lp_ava = ViewGroup.MarginLayoutParams(size, size)
-                            lp_ava.rightMargin = AndroidUtilities.dp(6)
-                            ava.setLayoutParams(lp_ava)
-                            ava.setRoundRadius(int(size/2))
-                        except Exception:
-                            pass
-                        ad = AvatarDrawable()
-                        try:
-                            ad.setInfo(0, str(m.get('name') or 'User'), None)
-                        except Exception:
-                            pass
-                        try:
-                            url = m.get('avatar')
-                            ava.setImage(ImageLocation.getForPath(url), '50_50', ad, None)
-                        except Exception:
-                            ava.setImageDrawable(ad)
-                        row.addView(ava)
-
-                        try:
-                            # Build a private-dialog style message (no name line)
-                            sender_id = 10000 + idx
-                            # Localize message text through Mandre.t (auto-translate fills cache asynchronously)
-                            raw_text = str(m.get('text') or '')
-                            try:
-                                localized_text = Mandre.t(plugin, raw_text)
-                            except Exception:
-                                localized_text = raw_text
-                            tl = TLRPC.TL_message(); tl.id = random.randint(1, 1_000_000); tl.date = int(time.time()); tl.message = localized_text
-                            chat_peer = TLRPC.TL_peerUser(); chat_peer.user_id = 1; tl.peer_id = chat_peer
-                            from_peer = TLRPC.TL_peerUser(); from_peer.user_id = sender_id; tl.from_id = from_peer
-                            tl.out = False
-                            mo = MessageObject(account, tl, False, False)
-                            cell = ChatMessageCell(ctx, account); cell.setMessageObject(mo, None, False, False, False)
-                            try:
-                                from android_utils import OnLongClickListener, OnClickListener
-                                cell.setOnLongClickListener(OnLongClickListener(lambda: True)); cell.setOnClickListener(OnClickListener(lambda: None))
-                            except Exception:
-                                pass
-                            # Make cell take remaining width so long lines can wrap
-                            try:
-                                from android.view import ViewGroup
-                                from android.widget import LinearLayout as _LL
-                                lp_cell = _LL.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
-                                row.addView(cell, lp_cell)
-                            except Exception:
-                                row.addView(cell)
-                        except Exception:
-                            pass
-
-                        content.addView(row)
-
-                    # Consume long press on the whole block to prevent list long-click
-                    try:
-                        from android_utils import OnLongClickListener
-                        scroll.setOnLongClickListener(OnLongClickListener(lambda: True))
-                    except Exception:
-                        pass
-
-                    return scroll
-                except Exception:
-                    return None
-
-            MandreSettings._custom_blocks[pid].append(_builder)
-            MandreSettings._ensure_hooks()
-        except Exception:
-            log(f"[MandreSettings] add_chat_preview error: {traceback.format_exc()}")
-
-    @staticmethod
-    def _ensure_hooks():
-        # Hook PluginSettingsActivity.fillItems to append custom blocks for the matching plugin
-        try:
-            if getattr(MandreSettings, '_hooks_installed', False):
-                return
-            MandreSettings._hooks_installed = True
-            plugin_settings_class = find_class("com.exteragram.messenger.plugins.ui.PluginSettingsActivity")
-            if not plugin_settings_class:
-                return
-            ArrayList = jclass("java.util.ArrayList")
-            UniversalAdapter = jclass("org.telegram.ui.Components.UniversalAdapter")
-            method = plugin_settings_class.getClass().getDeclaredMethod("fillItems", ArrayList, UniversalAdapter)
-            method.setAccessible(True)
-
-            class _Hook(MethodHook):
-                def after_hooked_method(self, param):
-                    try:
-                        activity = param.thisObject; items = param.args[0]
-                        plugin_obj = get_private_field(activity, "plugin"); pid = plugin_obj.getId() if plugin_obj else None
-                        builders = MandreSettings._custom_blocks.get(pid)
-                        if not builders: return
-                        UItem = jclass("org.telegram.ui.Components.UItem")
-                        for b in builders:
-                            try:
-                                view = b(activity.getContext())
-                                if view is None: continue
-                                # Insert preview above the last item, so toggles/descriptions stay below
-                                try:
-                                    size = items.size()
-                                    insert_pos = size - 1 if size > 0 else size
-                                    if insert_pos < 0:
-                                        insert_pos = 0
-                                    items.add(insert_pos, UItem.asCustom(view))
-                                except Exception:
-                                    items.add(UItem.asCustom(view))
-                            except Exception:
-                                pass
-                    except Exception: pass
-
-            # Attach via the running MandreLib plugin instance
-            try:
-                if '_mandrelib_instance' in globals() and _mandrelib_instance is not None:
-                    _mandrelib_instance.hook_method(method, _Hook())
-            except Exception:
-                pass
-
-            # Also guard settings long-click to avoid NPE for custom items
-            try:
-                UItem = jclass("org.telegram.ui.Components.UItem")
-                View = jclass("android.view.View")
-                IntCls = jclass("java.lang.Integer")
-                FloatCls = jclass("java.lang.Float")
-                onLongClick = plugin_settings_class.getClass().getDeclaredMethod(
-                    "onLongClick", UItem, View, IntCls.TYPE, FloatCls.TYPE, FloatCls.TYPE
-                )
-                onLongClick.setAccessible(True)
-
-                class _LongHook(MethodHook):
-                    def before_hooked_method(self, param):
-                        try:
-                            item = param.args[0]
-                            # Cancel long click if backing setting is missing (custom view)
-                            if item is None or (hasattr(item, 'settingItem') and item.settingItem is None):
-                                param.setResult(False)
-                        except Exception:
-                            pass
-
-                _mandrelib_instance.hook_method(onLongClick, _LongHook())
-            except Exception:
-                pass
-        except Exception:
-            log(f"[MandreSettings] ensure_hooks error: {traceback.format_exc()}")
-
 class MandreNotification:
     @staticmethod
     def show_simple(title: str, text: str, channel_id: str = "mandrelib_notifications"):
@@ -1785,132 +1279,6 @@ class MandreShare:
         except Exception as e:
             log(f"[MandreLib Share] Ошибка удаления временного файла: {e}")
 
-class MandreSheetContrl:
-    """
-    Контроллер для управления активным BottomSheet.
-    """
-    def __init__(self):
-        self.root = None
-        self.context = None
-        self.sheet = None
-        self.view_creators = {}
-        self.callbacks = {}
-        self._views_cache = {} 
-        self._is_ready = False
-
-    def _init_internal(self, context, root, sheet, creators, callbacks):
-        self.context = context
-        self.root = root
-        self.sheet = sheet
-        self.view_creators = creators
-        self.callbacks = callbacks
-        self._is_ready = True
-
-    # --- НОВЫЙ МЕТОД ---
-    def lock_swipe_on_interaction(self, view_id: str):
-        """
-        Блокирует жест закрытия (свайп вниз) BottomSheet, пока пользователь 
-        взаимодействует с указанным View (касается его).
-        Полезно для карт, ScrollView внутри листа, Canvas или WebView.
-        """
-        view = self.get_view(view_id)
-        if not view:
-            log(f"[MandreSheetContrl] View с ID '{view_id}' не найден для блокировки свайпа.")
-            return
-
-        try:
-            MotionEvent = find_class("android.view.MotionEvent")
-            ViewOnTouchListener = find_class("android.view.View$OnTouchListener")
-
-            class _TouchLocker(dynamic_proxy(ViewOnTouchListener)):
-                def onTouch(self, v, event):
-                    action = event.getAction()
-                    # ACTION_DOWN = 0: Палец коснулся экрана
-                    if action == 0: 
-                        # Запрещаем родителям (BottomSheet) перехватывать касания
-                        v.getParent().requestDisallowInterceptTouchEvent(True)
-                    # ACTION_UP = 1, ACTION_CANCEL = 3: Палец убран
-                    elif action == 1 or action == 3:
-                        # Разрешаем перехват обратно (хотя обычно это сбрасывается само)
-                        v.getParent().requestDisallowInterceptTouchEvent(False)
-                    
-                    # Возвращаем False, чтобы сам View продолжил обрабатывать событие 
-                    # (например, скроллил свой контент или нажимался)
-                    return False
-
-            view.setOnTouchListener(_TouchLocker())
-            log(f"[MandreSheetContrl] Блокировка свайпа установлена для '{view_id}'")
-        except Exception as e:
-            log(f"[MandreSheetContrl] Ошибка установки блокировки свайпа: {e}")
-    # -------------------
-
-    def update(self, new_dsl: str, new_callbacks: Dict[str, Callable] = None):
-        if not self._is_ready: return
-        if new_callbacks: self.callbacks = new_callbacks
-
-        def runner():
-            try:
-                data = MandreUI._parse_sheet_dsl(new_dsl)
-                if not data: return
-
-                # 1. Фиксация высоты против схлопывания
-                current_height = self.root.getHeight()
-                params = self.root.getLayoutParams()
-                params.height = current_height
-                self.root.setLayoutParams(params)
-
-                # 2. Настройка умной анимации
-                transition_target = self.root
-                if self.root.getParent() and isinstance(self.root.getParent(), ViewGroup):
-                    transition_target = self.root.getParent()
-
-                transition = TransitionSet()
-                transition.setOrdering(TransitionSet.ORDERING_TOGETHER)
-                
-                # ChangeBounds анимирует размеры и позицию (Морфинг)
-                # Применяем ко всему
-                transition.addTransition(ChangeBounds().setResizeClip(True))
-                
-                # ChangeTransform для кнопок и прочего
-                transition.addTransition(ChangeTransform())
-                
-                # Fade (Исчезновение/Появление)
-                # ВАЖНО: Исключаем "mandre_custom_view" из Fade!
-                # Чтобы он не моргал, а только менял размер.
-                fade = Fade(Fade.IN | Fade.OUT)
-                fade.excludeTarget("mandre_custom_view", True) 
-                transition.addTransition(fade)
-                
-                transition.setDuration(300)
-                transition.setInterpolator(AccelerateDecelerateInterpolator())
-                
-                TransitionManager.beginDelayedTransition(transition_target, transition)
-
-                # 3. Ребилд
-                self.root.removeAllViews()
-                self._views_cache.clear()
-                MandreUI._fill_sheet_content(self.context, self.root, data, self.callbacks, self.view_creators, self)
-                
-                # 4. Снимаем фиксацию
-                params.height = -2 
-                self.root.setLayoutParams(params)
-                
-            except Exception as e:
-                log(f"[MandreSheetContrl] Update error: {e}")
-
-        run_on_ui_thread(runner)
-
-    def dismiss(self):
-        if self.sheet:
-            try: self.sheet.dismiss()
-            except: pass
-
-    def get_view(self, view_id: str):
-        return self._views_cache.get(view_id)
-
-    def _register_view(self, vid, view):
-        if vid: self._views_cache[vid] = view
-        
 class MandreUI:
     @staticmethod
     def _internal_invoke_ripple(x: float, y: float, intensity: float):
@@ -2048,189 +1416,91 @@ class MandreUI:
     
     @staticmethod
     def _create_and_add_bar(activity, root_view, config):
-        # 1. РЕЗОЛВИНГ ЦВЕТОВ
-        
-        # Фон бара
-        bg_color = config.get("bg_color")
-        if bg_color is None:
-            bg_color = Theme.getColor(Theme.key_windowBackgroundWhite)
-        config["bg_color"] = bg_color
+        bar_container = LinearLayout(activity)
+        bar_container.setOrientation(LinearLayout.HORIZONTAL)
+        bar_container.setGravity(Gravity.CENTER)
+        bar_container.setElevation(0)
 
-        # Цвет пилюли (фон активной кнопки)
-        active_pill_color = config.get("active_bg_color")
-        if active_pill_color is None:
-            active_pill_color = Theme.getColor(Theme.key_featuredStickers_addButton)
-        config["active_bg_color"] = active_pill_color
-
-        # Цвет ИКОНКИ активной (должен быть контрастным к пилюле)
-        # Обычно это цвет текста внутри кнопки
-        active_icon_color = config.get("active_color")
-        if active_icon_color is None:
-            active_icon_color = Theme.getColor(Theme.key_featuredStickers_buttonText)
-        config["active_color"] = active_icon_color
-
-        # Цвет ТЕКСТА активного (должен быть контрастным к ФОНУ бара)
-        # Берем основной цвет текста приложения (в темной теме он белый/светлый)
-        # Либо можно взять key_windowBackgroundWhiteBlueText (акцентный)
-        active_text_color_val = config.get("active_text_color")
-        if active_text_color_val is None:
-            # Используем акцентный цвет текста, он обычно хорошо читается и совпадает с темой
-            active_text_color_val = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
-        config["active_text_color"] = active_text_color_val
-
-        # Цвет неактивных элементов (серый)
-        inactive_content_color = config.get("inactive_color")
-        if inactive_content_color is None:
-            inactive_content_color = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText)
-        config["inactive_color"] = inactive_content_color
-
-        # 2. СОЗДАНИЕ КОНТЕЙНЕРА
-        bar_container = FrameLayout(activity)
-        
         bg_drawable = GradientDrawable()
-        bg_drawable.setColor(bg_color)
+        bg_drawable.setColor(config["bg_color"])
         bg_drawable.setCornerRadius(AndroidUtilities.dp(config["corner_radius_dp"]))
-        
-        if config.get("stroke_width_dp", 0) > 0:
-            bg_drawable.setStroke(AndroidUtilities.dp(config["stroke_width_dp"]), config["stroke_color"])
-            
+        bg_drawable.setStroke(AndroidUtilities.dp(config["stroke_width_dp"]), config["stroke_color"])
         bar_container.setBackground(bg_drawable)
         
-        if Build.VERSION.SDK_INT >= 21:
-            bar_container.setElevation(AndroidUtilities.dp(4))
-            try:
-                from android.view import ViewOutlineProvider
-                bar_container.setOutlineProvider(ViewOutlineProvider.BACKGROUND)
-                bar_container.setClipToOutline(True)
-            except: pass
-
-        items_layout = LinearLayout(activity)
-        items_layout.setOrientation(LinearLayout.HORIZONTAL)
-        items_layout.setWeightSum(float(len(config["items"])))
-        bar_container.addView(items_layout, LayoutHelper.createFrame(-1, -1))
-        
         ui_elements = []
-        
         for i, item in enumerate(config["items"]):
-            item_click_area = FrameLayout(activity)
-            item_click_area.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2))
-            
-            lp = LinearLayout.LayoutParams(0, -1, 1.0)
-            items_layout.addView(item_click_area, lp)
+            item_frame = FrameLayout(activity)
+            frame_params = LinearLayout.LayoutParams(0, -1, 1.0)
+            item_frame.setLayoutParams(frame_params)
 
-            # --- PILL ---
             pill_view = View(activity)
             pill_bg = GradientDrawable()
-            pill_bg.setColor(active_pill_color)
-            pill_bg.setCornerRadius(AndroidUtilities.dp(16)) 
+            pill_bg.setColor(config["active_bg_color"])
+            pill_bg.setCornerRadius(AndroidUtilities.dp(config["corner_radius_dp"] - 8))
             pill_view.setBackground(pill_bg)
-            
-            pill_w = AndroidUtilities.dp(64)
-            pill_h = AndroidUtilities.dp(32)
-            
-            pill_params = FrameLayout.LayoutParams(pill_w, pill_h)
-            pill_params.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP
-            pill_params.topMargin = AndroidUtilities.dp(12)
+            pill_params = FrameLayout.LayoutParams(-1, -1)
+            pill_params.setMargins(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4))
             pill_view.setLayoutParams(pill_params)
             
             is_active = (i == config["active_index"])
             pill_view.setAlpha(1.0 if is_active else 0.0)
-            pill_view.setScaleX(1.0 if is_active else 0.5)
-            pill_view.setScaleY(1.0 if is_active else 0.5)
-            
-            item_click_area.addView(pill_view)
+            if is_active:
+                pill_view.setScaleX(0.8); pill_view.setScaleY(0.8)
+                pill_view.animate().scaleX(1.0).scaleY(1.0).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
+            item_frame.addView(pill_view)
 
-            # --- CONTENT ---
-            content_container = LinearLayout(activity)
-            content_container.setOrientation(LinearLayout.VERTICAL)
-            content_container.setGravity(Gravity.CENTER)
+            button_container = LinearLayout(activity)
+            button_container.setOrientation(LinearLayout.VERTICAL)
+            button_container.setGravity(Gravity.CENTER)
+            button_container.setLayoutParams(FrameLayout.LayoutParams(-1, -1))
+            button_container.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6))
+            button_container.setBackground(ColorDrawable(Color.TRANSPARENT))
+            button_container.setClickable(True)
+
+            tint_color = config["active_color"] if is_active else config["inactive_color"]
             
-            # Icon
             icon_view = ImageView(activity)
             res_id = ApplicationLoader.applicationContext.getResources().getIdentifier(item.get("icon"), "drawable", ApplicationLoader.applicationContext.getPackageName())
             if res_id != 0:
                 icon_view.setImageResource(res_id)
-            
-            icon_size = AndroidUtilities.dp(24)
-            content_container.addView(icon_view, LinearLayout.LayoutParams(icon_size, icon_size))
+                icon_view.setColorFilter(tint_color)
+            icon_params = LinearLayout.LayoutParams(AndroidUtilities.dp(24), AndroidUtilities.dp(24))
+            button_container.addView(icon_view, icon_params)
 
-            # Text
             text_view = TextView(activity)
             text_view.setText(item.get("text", ""))
-            text_view.setTextSize(12) 
-            text_view.setTypeface(AndroidUtilities.bold())
+            text_view.setTextColor(tint_color)
+            text_view.setTextSize(11)
             text_view.setGravity(Gravity.CENTER)
             text_params = LinearLayout.LayoutParams(-2, -2)
-            text_params.topMargin = AndroidUtilities.dp(4)
-            content_container.addView(text_view, text_params)
-
-            cont_params = FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL | Gravity.TOP)
-            cont_params.topMargin = AndroidUtilities.dp(16)
-            item_click_area.addView(content_container, cont_params)
-
-            # Initial Colors applying
-            # Иконка зависит от того, внутри пилюли она или нет
-            # Текст всегда на фоне бара
+            text_params.topMargin = AndroidUtilities.dp(2)
+            button_container.addView(text_view, text_params)
             
-            if is_active:
-                icon_view.setColorFilter(active_icon_color)
-                text_view.setTextColor(active_text_color_val)
-            else:
-                icon_view.setColorFilter(inactive_content_color)
-                text_view.setTextColor(inactive_content_color)
-            
-            # Handler
             def create_click_handler(index, on_click_callback, plugin_instance):
-                def handler(v):
-                    Mandre.UI.update_bottom_bar(plugin_instance.id, index)
+                def handler(*args):
                     if callable(on_click_callback):
-                        try: on_click_callback()
-                        except: pass
-                    try: v.performHapticFeedback(3)
-                    except: pass
+                        on_click_callback()
+                    # Обновляем визуальное состояние панели немедленно
+                    Mandre.UI.update_bottom_bar(plugin_instance.id, index)
+                    # Затем перезагружаем настройки для отображения нужной вкладки
                     Mandre.apply_and_refresh_settings(plugin_instance)
                 return handler
 
             on_click_callback = item.get("on_click")
-            item_click_area.setOnClickListener(OnClickListener(create_click_handler(i, on_click_callback, config["plugin_instance"])))
+            button_container.setOnClickListener(OnClickListener(create_click_handler(i, on_click_callback, config["plugin_instance"])))
             
-            ui_elements.append({
-                "icon": icon_view, 
-                "text": text_view, 
-                "pill": pill_view,
-                "active_icon_color": active_icon_color, # Цвет иконки (для пилюли)
-                "active_text_color": active_text_color_val, # Цвет текста (для фона)
-                "inactive_color": inactive_content_color
-            })
+            item_frame.addView(button_container)
+            bar_container.addView(item_frame)
+            ui_elements.append({"icon": icon_view, "text": text_view, "pill": pill_view})
 
-        # Bar Position
-        bar_height = AndroidUtilities.dp(80)
-        bar_params = FrameLayout.LayoutParams(-1, bar_height)
+        bar_params = FrameLayout.LayoutParams(-1, AndroidUtilities.dp(56))
         bar_params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
-        
-        margin_side = AndroidUtilities.dp(16)
-        margin_bottom = AndroidUtilities.dp(16)
-        
-        bar_params.setMargins(margin_side, 0, margin_side, margin_bottom)
+        bar_params.setMargins(AndroidUtilities.dp(24), 0, AndroidUtilities.dp(24), AndroidUtilities.dp(12))
         
         root_view.addView(bar_container, bar_params)
         
-        # Anim entry
         bar_container.setTranslationY(AndroidUtilities.dp(100))
-        bar_container.setAlpha(0.0)
-        
-        try:
-            animset = AnimatorSet()
-            animset.playTogether([
-                ObjectAnimator.ofFloat(bar_container, "translationY", float(AndroidUtilities.dp(100)), 0.0),
-                ObjectAnimator.ofFloat(bar_container, "alpha", 0.0, 1.0)
-            ])
-            animset.setDuration(400)
-            animset.setInterpolator(DecelerateInterpolator())
-            animset.start()
-        except Exception as e:
-            bar_container.setTranslationY(0.0)
-            bar_container.setAlpha(1.0)
+        ObjectAnimator.ofFloat(bar_container, "translationY", AndroidUtilities.dp(100), 0).setDuration(250).start()
         
         config["view_instance"] = bar_container
         config["ui_elements"] = ui_elements
@@ -2242,27 +1512,21 @@ class MandreUI:
             config = _BOTTOM_BAR_CONFIGS[plugin_id]
             
             if config.get("active_index") == active_index: return
+
             config["active_index"] = active_index
             
             ui_elements = config.get("ui_elements", [])
             for i, elements in enumerate(ui_elements):
                 is_active = (i == active_index)
+                tint_color = config["active_color"] if is_active else config["inactive_color"]
                 
-                # Colors logic fixed for Dark Mode readability
-                icon_color = elements["active_icon_color"] if is_active else elements["inactive_color"]
-                text_color = elements["active_text_color"] if is_active else elements["inactive_color"]
-                
-                try:
-                    elements["icon"].setColorFilter(icon_color)
-                    elements["text"].setTextColor(text_color)
-                except Exception:
-                    pass
+                elements["icon"].setColorFilter(tint_color)
+                elements["text"].setTextColor(tint_color)
                 
                 pill = elements["pill"]
-                if is_active:
-                    pill.animate().alpha(1.0).scaleX(1.0).scaleY(1.0).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
-                else:
-                    pill.animate().alpha(0.0).scaleX(0.5).scaleY(0.5).setDuration(200).start()
+                target_alpha = 1.0 if is_active else 0.0
+                if pill.getAlpha() != target_alpha:
+                    pill.animate().alpha(target_alpha).setDuration(200).start()
 
         run_on_ui_thread(updater)
 
@@ -2271,14 +1535,13 @@ class MandreUI:
         plugin_instance: BasePlugin,
         items: List[Dict[str, Any]],
         active_index_key: str = "active_tab",
-        # Цвета ставим в None, чтобы они брались из темы Telegram динамически
-        bg_color: int = None, 
-        active_color: int = None,
-        inactive_color: int = None,
-        active_bg_color: int = None,
-        stroke_color: int = 0, # По умолчанию без обводки
-        stroke_width_dp: int = 0,
-        corner_radius_dp: int = 20 # Скругление как у MD3 контейнеров
+        bg_color: int = Color.argb(210, 50, 50, 55),
+        active_color: int = Color.WHITE,
+        inactive_color: int = Color.rgb(140, 140, 140),
+        active_bg_color: int = Color.argb(80, 255, 255, 255),
+        stroke_color: int = Color.argb(80, 120, 120, 120),
+        stroke_width_dp: int = 1,
+        corner_radius_dp: int = 28
     ):
         global _bottom_bar_hooks_installed
         plugin_id = plugin_instance.id
@@ -2286,13 +1549,9 @@ class MandreUI:
         _BOTTOM_BAR_CONFIGS[plugin_id] = {
             "plugin_id": plugin_id, "plugin_instance": plugin_instance,
             "items": items, "active_index_key": active_index_key,
-            "bg_color": bg_color, 
-            "active_color": active_color, 
-            "inactive_color": inactive_color,
-            "active_bg_color": active_bg_color, 
-            "stroke_color": stroke_color,
-            "stroke_width_dp": stroke_width_dp, 
-            "corner_radius_dp": corner_radius_dp,
+            "bg_color": bg_color, "active_color": active_color, "inactive_color": inactive_color,
+            "active_bg_color": active_bg_color, "stroke_color": stroke_color,
+            "stroke_width_dp": stroke_width_dp, "corner_radius_dp": corner_radius_dp,
             "view_instance": None, "ui_elements": []
         }
 
@@ -2312,1691 +1571,18 @@ class MandreUI:
         except Exception:
             log(f"[MandreLib] Не удалось установить хуки для BottomBar: {traceback.format_exc()}")
 
-    @staticmethod
-    def show_bottom_sheet(plugin_instance: BasePlugin, dsl: str, callbacks: Dict[str, Callable] = None, view_creators: Dict[str, Callable] = None) -> MandreSheetContrl:
-        if callbacks is None: callbacks = {}
-        if view_creators is None: view_creators = {}
-        
-        controller = MandreSheetContrl() # Теперь Python знает этот класс!
-        
-        def runner():
-            try:
-                fragment = get_last_fragment()
-                context = fragment.getParentActivity() if fragment else None
-                if not context: return
-
-                data = MandreUI._parse_sheet_dsl(dsl)
-                if not data: return
-
-                sheet = BottomSheet(context, False)
-                
-                root = LinearLayout(context)
-                root.setOrientation(LinearLayout.VERTICAL)
-                root.setPadding(AndroidUtilities.dp(20), AndroidUtilities.dp(16), AndroidUtilities.dp(20), AndroidUtilities.dp(20))
-
-                # --- ДОБАВИТЬ ВОТ ЭТО ДЛЯ ПЛАВНОСТИ ---
-                try:
-                    from android.animation import LayoutTransition
-                    lt = LayoutTransition()
-                    lt.enableTransitionType(LayoutTransition.CHANGING) # Включает анимацию при изменении размеров
-                    root.setLayoutTransition(lt)
-                except: pass
-                # ---------------------------------------
-                
-                controller._init_internal(context, root, sheet, view_creators, callbacks)
-                MandreUI._fill_sheet_content(context, root, data, callbacks, view_creators, controller)
-
-                sheet.setCustomView(root)
-                sheet.show()
-            except Exception as e:
-                log(f"[MandreUI] Error: {e}")
-                BulletinHelper.show_error(f"UI Error: {e}")
-
-        run_on_ui_thread(runner)
-        return controller
-
-    @staticmethod
-    def _fill_sheet_content(context, root, data, callbacks, view_creators, controller):
-        def get_size(item_dict, key, default):
-            try: return int(item_dict.get(key, default))
-            except: return default
-
-        # --- Title ---
-        if data.get("title"):
-            title_tv = TextView(context)
-            title_tv.setText(str(data["title"]))
-            title_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "title_size", 20))
-            title_tv.setTypeface(AndroidUtilities.bold())
-            title_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-            root.addView(title_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-            controller._register_view(data.get("id"), title_tv)
-
-        # --- Tags (Smart Layout) ---
-        if data.get("tags"):
-            tags_container = LinearLayout(context)
-            tags_container.setOrientation(LinearLayout.HORIZONTAL)
-            # Вес будет распределяться равномерно
-            tags_container.setWeightSum(float(len(data["tags"])))
-            
-            for tag in data["tags"]:
-                tag_frame = FrameLayout(context)
-                bg = GradientDrawable()
-                bg.setCornerRadius(AndroidUtilities.dp(8))
-                
-                col_str = tag.get("color")
-                text_color = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText)
-                bg_col_val = 0x20000000
-                
-                if col_str:
-                    try: 
-                        c = Color.parseColor(col_str)
-                        text_color = c
-                        bg_col_val = (c & 0x00FFFFFF) | 0x20000000 
-                    except: pass
-                
-                bg.setColor(bg_col_val)
-                tag_frame.setBackground(bg)
-                
-                tv = TextView(context)
-                tv.setText(tag.get("text", ""))
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(tag, "size", 12))
-                tv.setTypeface(AndroidUtilities.bold())
-                tv.setTextColor(text_color)
-                tv.setGravity(Gravity.CENTER) # Текст внутри тега по центру
-                tv.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(6), AndroidUtilities.dp(4), AndroidUtilities.dp(6))
-                
-                tag_frame.addView(tv, LayoutHelper.createFrame(-1, -2)) # Frame match_parent внутри
-                
-                # SMART LAYOUT: width=0, weight=1.0 -> Растягивание
-                lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
-                lp.setMargins(AndroidUtilities.dp(4), 0, AndroidUtilities.dp(4), 0)
-                tags_container.addView(tag_frame, lp)
-                
-                controller._register_view(tag.get("id"), tv)
-
-            # Убираем отступы у крайних элементов для красоты
-            root.addView(tags_container, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 8))
-
-        # --- Subtext ---
-        if data.get("subtext"):
-            sub_tv = TextView(context)
-            sub_tv.setText(str(data["subtext"]))
-            sub_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "sub_size", 13))
-            sub_tv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
-            root.addView(sub_tv, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-            controller._register_view("subtext", sub_tv)
-
-        # --- Custom View ---
-        custom_view_data = data.get("view")
-        if custom_view_data:
-            vid = custom_view_data.get("id")
-            if vid and vid in view_creators:
-                try:
-                    c_view = view_creators[vid](context)
-                    if c_view:
-                        if c_view.getParent(): c_view.getParent().removeView(c_view)
-                        
-                        # ВАЖНО: Даем View уникальное имя для анимации
-                        # Это позволит TransitionManager понять, что это ТОТ ЖЕ view
-                        c_view.setTransitionName("mandre_custom_view")
-                        
-                        height_dp = get_size(custom_view_data, "height", 0)
-                        height_px = AndroidUtilities.dp(height_dp) if height_dp > 0 else -2
-                        root.addView(c_view, LayoutHelper.createLinear(-1, height_px, 0, 0, 0, 12))
-                        controller._register_view(vid, c_view)
-                except Exception as e:
-                    log(f"[MandreUI] View error: {e}")
-
-        # --- Content (Text + Align) ---
-        content_data = data.get("content", {})
-        content_text = content_data.get("text", "")
-        if content_text:
-            scroll = ScrollView(context)
-            scroll.setVerticalScrollBarEnabled(False)
-            content_tv = TextView(context)
-            content_tv.setText(content_text)
-            content_tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(content_data, "size", 15))
-            content_tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-            content_tv.setTextIsSelectable(True)
-            content_tv.setLineSpacing(AndroidUtilities.dp(2), 1.1)
-            
-            # ALIGNMENT LOGIC
-            align_map = {
-                "left": Gravity.LEFT,
-                "center": Gravity.CENTER,
-                "right": Gravity.RIGHT,
-                "start": Gravity.START,
-                "end": Gravity.END
-            }
-            gravity = align_map.get(content_data.get("align", "left").lower(), Gravity.LEFT)
-            content_tv.setGravity(gravity)
-            
-            scroll.addView(content_tv)
-            root.addView(scroll, LayoutHelper.createLinear(-1, 0, 1.0))
-            controller._register_view(content_data.get("id", "content"), content_tv)
-
-        if data.get("actions"):
-            div = View(context)
-            div.setBackgroundColor(Theme.getColor(Theme.key_divider))
-            root.addView(div, LayoutHelper.createLinear(-1, 1, 0, 16, 0, 12))
-
-        # --- Actions (Smart Layout) ---
-        if data.get("actions"):
-            actions_row = LinearLayout(context)
-            actions_row.setOrientation(LinearLayout.HORIZONTAL)
-            actions_row.setGravity(Gravity.CENTER_VERTICAL)
-            actions_row.setWeightSum(float(len(data["actions"]))) # Равномерное распределение
-            
-            for item in data["actions"]:
-                itype = item.get("type")
-                btn_frame = FrameLayout(context)
-                btn_bg = GradientDrawable()
-                btn_bg.setCornerRadius(AndroidUtilities.dp(18))
-                
-                # Цвет фона кнопки
-                col_str = item.get("color") # Можно задать цвет кнопки в DSL!
-                bg_color = Theme.getColor(Theme.key_chat_inLoader) & 0x20FFFFFF | 0x10000000
-                if col_str:
-                    try: bg_color = (Color.parseColor(col_str) & 0x00FFFFFF) | 0x20000000
-                    except: pass
-                
-                btn_bg.setColor(bg_color)
-                btn_frame.setBackground(btn_bg)
-                
-                content_layout = LinearLayout(context)
-                content_layout.setOrientation(LinearLayout.HORIZONTAL)
-                content_layout.setGravity(Gravity.CENTER)
-                content_layout.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(10), AndroidUtilities.dp(12), AndroidUtilities.dp(10))
-                
-                if item.get("icon"):
-                    iv = ImageView(context)
-                    res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
-                    if res_id != 0:
-                        iv.setImageResource(res_id)
-                        iv.setColorFilter(Theme.getColor(Theme.key_dialogTextBlack))
-                        content_layout.addView(iv, LayoutHelper.createLinear(20, 20))
-                
-                if item.get("text"):
-                    tv = TextView(context)
-                    tv.setText(item["text"])
-                    tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(item, "size", 14))
-                    tv.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-                    tv.setGravity(Gravity.CENTER)
-                    # Если есть иконка, даем отступ
-                    ml = 6 if item.get("icon") else 0
-                    content_layout.addView(tv, LayoutHelper.createLinear(-2, -2, Gravity.CENTER, ml, 0, 0, 0))
-
-                btn_frame.addView(content_layout, LayoutHelper.createFrame(-2, -2, Gravity.CENTER))
-                
-                # Click Logic
-                cid = item.get("id")
-                if itype == "button":
-                    if cid and cid in callbacks:
-                        btn_frame.setOnClickListener(OnClickListener(lambda v, f=callbacks[cid]: f(controller)))
-                    else:
-                        btn_frame.setOnClickListener(OnClickListener(lambda v: controller.dismiss()))
-                elif itype == "menu":
-                    menu_items = item.get("items", [])
-                    def show_popup(anchor, items=menu_items):
-                        MandreUI._show_popup_menu(anchor, items, callbacks, controller.sheet)
-                    btn_frame.setOnClickListener(OnClickListener(lambda v: show_popup(v)))
-
-                # SMART LAYOUT: width=0, weight=1.0
-                lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
-                lp.setMargins(AndroidUtilities.dp(4), 0, AndroidUtilities.dp(4), 0)
-                actions_row.addView(btn_frame, lp)
-            
-            root.addView(actions_row, LayoutHelper.createLinear(-1, -2, 0, 0, 0, 12))
-
-        # --- Close Button ---
-        close_btn = FrameLayout(context)
-        c_bg = GradientDrawable()
-        c_bg.setCornerRadius(AndroidUtilities.dp(10))
-        c_bg.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText))
-        close_btn.setBackground(c_bg)
-        close_btn.setPadding(0, AndroidUtilities.dp(12), 0, AndroidUtilities.dp(12))
-        c_text = TextView(context)
-        c_text.setText(data.get("close_text", "Закрыть"))
-        c_text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, get_size(data, "close_size", 15))
-        c_text.setTypeface(AndroidUtilities.bold())
-        c_text.setTextColor(Color.WHITE)
-        c_text.setGravity(Gravity.CENTER)
-        close_btn.addView(c_text)
-        close_btn.setOnClickListener(OnClickListener(lambda v: controller.dismiss()))
-        root.addView(close_btn, LayoutHelper.createLinear(-1, -2))
-
-    @staticmethod
-    def _parse_sheet_dsl(dsl: str) -> Dict:
-        try:
-            import re
-            # Корневой тег
-            root_match = re.search(r'<sheet\s*(.*?)>(.*)</sheet>', dsl, re.DOTALL)
-            if not root_match: return None
-            
-            attrs_str, body = root_match.groups()
-            result = MandreSettings._parse_html(f"<dummy {attrs_str} />")[0]
-            
-            # Tags
-            result["tags"] = []
-            for m in re.finditer(r'<tag\s*(.*?)/>', body):
-                result["tags"].append(MandreSettings._parse_html(f"<dummy {m.group(1)} />")[0])
-            
-            # Content (Text)
-            c_match = re.search(r'<content\s*(.*?)>(.*?)</content>', body, re.DOTALL)
-            if c_match:
-                c_attrs, c_text = c_match.groups()
-                content_info = MandreSettings._parse_html(f"<dummy {c_attrs} />")[0]
-                content_info["text"] = c_text.strip()
-                result["content"] = content_info
-            
-            # Custom View (<view>)
-            v_match = re.search(r'<view\s*(.*?)/>', body)
-            if v_match:
-                v_attrs = v_match.group(1)
-                result["view"] = MandreSettings._parse_html(f"<dummy {v_attrs} />")[0]
-
-            # Actions
-            result["actions"] = []
-            actions_body = body
-            a_block = re.search(r'<actions>(.*?)</actions>', body, re.DOTALL)
-            if a_block: actions_body = a_block.group(1)
-            
-            for m in re.finditer(r'<button\s*(.*?)/>', actions_body):
-                btn = MandreSettings._parse_html(f"<dummy {m.group(1)} />")[0]
-                btn["type"] = "button"
-                result["actions"].append(btn)
-                
-            menu_match = re.search(r'<menu\s*(.*?)>(.*?)</menu>', actions_body, re.DOTALL)
-            if menu_match:
-                menu_attrs, menu_body = menu_match.groups()
-                menu = MandreSettings._parse_html(f"<dummy {menu_attrs} />")[0]
-                menu["type"] = "menu"
-                menu["items"] = []
-                for im in re.finditer(r'<item\s*(.*?)/>', menu_body):
-                    it = MandreSettings._parse_html(f"<dummy {im.group(1)} />")[0]
-                    menu["items"].append(it)
-                result["actions"].append(menu)
-                
-            return result
-        except Exception as e:
-            log(f"[MandreUI] DSL Parse Error: {e}")
-            return None
-            
-    @staticmethod
-    def _show_popup_menu(anchor, items, callbacks, sheet):
-        # (код popup menu, оставь как был)
-        try:
-            context = anchor.getContext()
-            layout = ActionBarPopupWindow.ActionBarPopupWindowLayout(context)
-            layout.setBackgroundColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuBackground))
-            layout.setFitItems(True)
-            
-            popup = ActionBarPopupWindow(layout, -2, -2)
-            
-            for item in items:
-                frame = FrameLayout(context)
-                frame.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2))
-                frame.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(12), AndroidUtilities.dp(16), AndroidUtilities.dp(12))
-                
-                lin = LinearLayout(context)
-                lin.setOrientation(LinearLayout.HORIZONTAL)
-                lin.setGravity(Gravity.CENTER_VERTICAL)
-                
-                if item.get("icon"):
-                    iv = ImageView(context)
-                    res_id = context.getResources().getIdentifier(item["icon"], "drawable", context.getPackageName())
-                    iv.setImageResource(res_id)
-                    iv.setColorFilter(Theme.getColor(Theme.key_actionBarDefaultSubmenuItem))
-                    lin.addView(iv, LayoutHelper.createLinear(24, 24, 0, 0, 12, 0))
-                    
-                tv = TextView(context)
-                tv.setText(item.get("text", ""))
-                tv.setTextColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuItem))
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16)
-                lin.addView(tv)
-                
-                frame.addView(lin)
-                
-                cid = item.get("id")
-                def on_click(v, func=callbacks.get(cid)):
-                    popup.dismiss()
-                    if func: 
-                        # Меню не может вызывать update контроллера напрямую (пока), 
-                        # поэтому просто вызываем функцию без аргументов
-                        try: func() 
-                        except: pass
-                        
-                frame.setOnClickListener(OnClickListener(on_click))
-                layout.addView(frame, LayoutHelper.createLinear(-1, -2))
-            
-            popup.setOutsideTouchable(True)
-            popup.setFocusable(True)
-            popup.showAsDropDown(anchor, 0, -anchor.getHeight() - AndroidUtilities.dp(10))
-            popup.dimBehind()
-        except Exception as e:
-            log(f"[MandreUI] Popup error: {e}")
-
-class MandreSuggestions:
-    """
-    Модуль для создания кастомных меню автодополнения (как при вводе @ или /).
-    Использует HTML-like DSL.
-    """
-    
-    @staticmethod
-    def register(plugin_instance: BasePlugin, trigger: str, content: Any):
-        """
-        Регистрирует триггер для меню.
-        :param trigger: Текст, при вводе которого появится меню (например, "#myui", "//tools").
-        :param content: Строка с DSL или функция, возвращающая строку DSL.
-                        DSL формат: <item text="Title" subtext="Description" />
-        """
-        _SUGGESTIONS_REGISTRY[trigger.lower()] = content
-        MandreSuggestions._ensure_hook(plugin_instance)
-        log(f"[MandreSuggestions] Зарегистрирован триггер '{trigger}' для {plugin_instance.id}")
-
-    @staticmethod
-    def trigger_input(text: str):
-        """Программно вставляет текст в поле ввода, вызывая меню (если триггер совпадает)."""
-        run_on_ui_thread(lambda: MandreSuggestions._inject_text(text))
-
-    @staticmethod
-    def _inject_text(text: str):
-        try:
-            fragment = get_last_fragment()
-            if hasattr(fragment, "getChatActivityEnterView"):
-                enter_view = fragment.getChatActivityEnterView()
-                field = enter_view.getEditField() if enter_view else None
-                if field:
-                    field.setText(text)
-                    field.setSelection(len(text))
-        except Exception: pass
-
-    @staticmethod
-    def _parse_dsl(dsl_string: str) -> tuple:
-        """Парсит DSL и возвращает (titles, descriptions)."""
-        titles = []
-        descriptions = []
-        # Simple regex parsing for speed
-        # Matches <item ... /> or <cmd ... /> or <s ... />
-        # Attrs: text/t/value/command -> Title
-        #        subtext/d/desc/help -> Description
-        pattern = re.compile(r'<(?:\w+)\s+([^>]+?)\s*/?>')
-        attr_pattern = re.compile(r'([a-zA-Z0-9_]+)\s*=\s*["\']([^"\']+)["\']')
-        
-        for match in pattern.finditer(dsl_string):
-            attrs_str = match.group(1)
-            attrs = dict(attr_pattern.findall(attrs_str))
-            
-            # Resolve title
-            title = attrs.get("text") or attrs.get("t") or attrs.get("value") or attrs.get("command") or "Item"
-            
-            # Resolve description
-            desc = attrs.get("subtext") or attrs.get("d") or attrs.get("desc") or attrs.get("help") or "MandreLib"
-            
-            titles.append(title)
-            descriptions.append(desc)
-            
-        return titles, descriptions
-
-    class _Hook(MethodHook):
-        def before_hooked_method(self, param):
-            try:
-                # Аргументы: (CharSequence text, int position, ArrayList messages, boolean username, boolean hashtag)
-                if not param.args or param.args[0] is None: return
-                
-                text = str(param.args[0].toString())
-                if not text: return
-
-                # Ищем совпадение по триггеру
-                matched_trigger = None
-                content_source = None
-                
-                for trigger, content in _SUGGESTIONS_REGISTRY.items():
-                    if text.lower().startswith(trigger):
-                        matched_trigger = trigger
-                        content_source = content
-                        break
-                
-                if not matched_trigger: return
-
-                # Получаем DSL
-                dsl = content_source() if callable(content_source) else str(content_source)
-                titles_py, descs_py = MandreSuggestions._parse_dsl(dsl)
-                
-                if not titles_py: return
-
-                # Инъекция в адаптер
-                adapter = param.thisObject
-                
-                # Reflection magic (как в list_of_commands.py)
-                cls = adapter.getClass()
-                f_cmds = cls.getDeclaredField("searchResultCommands")
-                f_help = cls.getDeclaredField("searchResultCommandsHelp")
-                f_delegate = cls.getDeclaredField("delegate")
-                
-                f_cmds.setAccessible(True)
-                f_help.setAccessible(True)
-                f_delegate.setAccessible(True)
-                
-                # Конвертация в Java ArrayList
-                StringClass = find_class("java.lang.String")
-                from java.util import Arrays
-                
-                # Создаем Java массив строк
-                def to_jlist(pylist):
-                    arr = java.lang.reflect.Array.newInstance(StringClass, len(pylist))
-                    for i, v in enumerate(pylist):
-                        arr[i] = v
-                    return ArrayList(Arrays.asList(arr))
-
-                # Используем упрощенный метод, если jython позволяет, иначе через рефлексию выше
-                # Но надежнее так:
-                j_titles = ArrayList()
-                j_descs = ArrayList()
-                for t in titles_py: j_titles.add(str(t))
-                for d in descs_py: j_descs.add(str(d))
-
-                f_cmds.set(adapter, j_titles)
-                f_help.set(adapter, j_descs)
-                
-                # Обновляем UI
-                def ui_update():
-                    adapter.notifyDataSetChanged()
-                    delegate = f_delegate.get(adapter)
-                    if delegate:
-                        # needChangePanelVisibility(boolean show)
-                        delegate.needChangePanelVisibility(True)
-                
-                run_on_ui_thread(ui_update)
-                
-                # Блокируем оригинальный поиск Telegram
-                param.setResult(None)
-                
-            except Exception as e:
-                log(f"[MandreSuggestions] Hook error: {e}")
-
-    @staticmethod
-    def _ensure_hook(plugin_instance):
-        global _suggestions_hook_installed
-        if _suggestions_hook_installed: return
-        
-        try:
-            MentionsAdapter = find_class("org.telegram.ui.Adapters.MentionsAdapter")
-            CharSequence = find_class("java.lang.CharSequence")
-            Integer = find_class("java.lang.Integer")
-            ArrayList = find_class("java.util.ArrayList")
-            Boolean = find_class("java.lang.Boolean")
-            
-            # searchUsernameOrHashtag(CharSequence text, int position, ArrayList messages, boolean username, boolean hashtag)
-            method = MentionsAdapter.getClass().getDeclaredMethod(
-                "searchUsernameOrHashtag", 
-                CharSequence, Integer.TYPE, ArrayList, Boolean.TYPE, Boolean.TYPE
-            )
-            
-            plugin_instance.hook_method(method, MandreSuggestions._Hook())
-            _suggestions_hook_installed = True
-            log("[MandreSuggestions] Хук успешно установлен.")
-        except Exception as e:
-            log(f"[MandreSuggestions] Не удалось установить хук: {e}")
-
-class MandreMessages:
-    @staticmethod
-    def get_local(dialog_id: int, limit: int = 100) -> List[Any]:
-        """
-        Мгновенно получает сообщения из локальной базы данных (кэша).
-        Не делает запросов в сеть. Возвращает список объектов TLRPC.Message.
-        Usage: msgs = Mandre.Messages.get_local(dialog_id, 50)
-        """
-        messages = []
-        db = Mandre.sql_get_database()
-        if not db: return messages
-        
-        # Читаем сырой BLOB (data), ID сообщения (mid) и дату для точной сортировки
-        query = f"SELECT data, mid, date FROM messages_v2 WHERE uid = {int(dialog_id)} ORDER BY date DESC LIMIT {int(limit)}"
-        cursor = db.queryFinalized(query)
-        
-        try:
-            while cursor.next():
-                data = cursor.byteBufferValue(0) # NativeByteBuffer
-                if data:
-                    # Десериализация TL-объекта из байтов
-                    msg = TLRPC.Message.TLdeserialize(data, data.readInt32(False), False)
-                    if msg:
-                        # Восстанавливаем критичные поля из колонок БД (быстрее и надежнее)
-                        msg.id = cursor.intValue(1)
-                        msg.date = cursor.intValue(2)
-                        msg.dialog_id = int(dialog_id)
-                        messages.append(msg)
-                    data.reuse() # Обязательно освобождаем память NativeByteBuffer
-        except Exception as e:
-            log(f"[MandreMessages] SQL Error: {e}")
-        finally:
-            cursor.dispose() # Закрываем курсор
-            
-        return messages
-
-
-class _AsyncLoopManager:
-    """
-    Управляет отдельным потоком для AsyncIO Event Loop.
-    Это позволяет запускать асинхронный код, не блокируя UI Telegram.
-    """
-    def __init__(self):
-        self.loop = None
-        self.thread = None
-        self.ready_event = threading.Event()
-
-    def start(self):
-        if self.thread and self.thread.is_alive():
-            return
-        self.thread = threading.Thread(target=self._run_loop, daemon=True, name="MandreAsyncLoop")
-        self.thread.start()
-        # Ждем, пока цикл запустится
-        self.ready_event.wait()
-
-    def _run_loop(self):
-        # Создаем и запускаем новый цикл событий в этом потоке
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.ready_event.set()
-        try:
-            self.loop.run_forever()
-        except Exception as e:
-            log(f"[MandreAsync] Loop crashed: {e}")
-
-    def submit(self, coro):
-        """Отправляет корутину в вечный цикл."""
-        if not self.loop:
-            self.start()
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
-
-_ASYNC_MANAGER = _AsyncLoopManager()
-
-class MandreAsync:
-    """
-    Асинхронный движок MandreLib.
-    Позволяет использовать async/await и httpx.
-    """
-    @staticmethod
-    def ensure_env():
-        """Проверяет и устанавливает httpx стэк."""
-        try:
-            import httpx
-            return True
-        except ImportError:
-            BulletinHelper.show_info("Установка Async компонентов...")
-            # Используем MandrePip для тихой установки
-            _, _, site_dir, _ = _mandrelib_get_pip_dirs()
-            _mandrelib_ensure_site_on_path(site_dir)
-            
-            if not _mandrelib_bootstrap_pip():
-                BulletinHelper.show_error("Ошибка Pip Bootstrap")
-                return False
-            
-            success = True
-            for name, url in WHEELS_ASYNC_STACK:
-                # Проверяем, установлен ли уже пакет, чтобы не качать зря
-                try:
-                    __import__(name)
-                    continue
-                except ImportError:
-                    pass
-                
-                log(f"[MandreAsync] Installing {name}...")
-                code, out, err = MandrePip.install(url)
-                if code != 0:
-                    log(f"[MandreAsync] Failed to install {name}: {err}")
-                    success = False
-                    break
-            
-            if success:
-                # Сбрасываем кэш импортов
-                import importlib
-                importlib.invalidate_caches()
-                BulletinHelper.show_success("Async компоненты установлены! Перезапустите плагины.")
-            else:
-                BulletinHelper.show_error("Ошибка установки компонентов")
-            return success
-
-    @staticmethod
-    def run(coro):
-        """
-        Запускает асинхронную функцию (корутину) в фоновом потоке.
-        Пример: Mandre.Async.run(my_async_func())
-        """
-        return _ASYNC_MANAGER.submit(coro)
-
-    @staticmethod
-    def get_httpx_client():
-        """Возвращает настроенный асинхронный клиент (ленивый импорт)."""
-        try:
-            import httpx
-            return httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-        except ImportError:
-            log("[MandreAsync] httpx not installed. Call ensure_env() first.")
-            return None
-
-class MandreDecorators:
-    """
-    Модуль декораторов для современного написания плагинов.
-    Поддерживает Smart Argument Parsing.
-    """
-    
-    @staticmethod
-    def command(name: str = None, aliases: List[str] = None, description: str = None):
-        """
-        Декоратор для регистрации команды.
-        Пример:
-        @Mandre.Command(aliases=["hi"])
-        def hello(self, name: str, count: int = 1): ...
-        """
-        def decorator(func):
-            setattr(func, "_mandre_handler_type", "command")
-            setattr(func, "_mandre_cmd_name", name)
-            setattr(func, "_mandre_cmd_aliases", aliases or [])
-            setattr(func, "_mandre_cmd_desc", description)
-            return func
-        return decorator
-
-    @staticmethod
-    def on_message(pattern: str = None, outgoing: bool = True, incoming: bool = False):
-        """
-        Декоратор для перехвата сообщений по Regex.
-        Пример:
-        @Mandre.OnMessage(pattern=r"hello", outgoing=True)
-        def handler(self, message): ...
-        """
-        def decorator(func):
-            setattr(func, "_mandre_handler_type", "regex")
-            setattr(func, "_mandre_regex_pattern", pattern)
-            setattr(func, "_mandre_regex_out", outgoing)
-            setattr(func, "_mandre_regex_in", incoming)
-            return func
-        return decorator
-
-# --- TEXT PARSING ENGINE (Based on Pyrogram) ---
-
-class _TextUtils:
-    @staticmethod
-    def add_surrogates(text):
-        # Telegram считает длину в UTF-16 (Java), Python в Unicode.
-        # Эмодзи в Python = 1 символ, в Java = 2 символа.
-        # Эта функция принудительно разбивает эмодзи на суррогатные пары для корректного подсчета смещения.
-        return re.sub(
-            r"[\U00010000-\U0010FFFF]",
-            lambda match: "".join(
-                chr(i) for i in struct.unpack("<HH", match.group().encode("utf-16le"))
-            ),
-            text
-        )
-
-    @staticmethod
-    def remove_surrogates(text):
-        return text.encode("utf-16", "surrogatepass").decode("utf-16")
-
-    @staticmethod
-    def replace_once(source, old, new, start):
-        return source[:start] + source[start:].replace(old, new, 1)
-
-class _MandreHTMLParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.text = ""
-        self.entities = []
-        self.tag_entities = {}
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        entity = None
-        extra = {}
-
-        if tag in ["b", "strong"]:
-            entity = TLRPC.TL_messageEntityBold
-        elif tag in ["i", "em"]:
-            entity = TLRPC.TL_messageEntityItalic
-        elif tag == "u":
-            entity = TLRPC.TL_messageEntityUnderline
-        elif tag in ["s", "del", "strike"]:
-            entity = TLRPC.TL_messageEntityStrike
-        elif tag == "blockquote":
-            entity = TLRPC.TL_messageEntityBlockquote
-            if "expandable" in attrs:
-                # В текущей схеме TL это флаг collapsed
-                extra["collapsed"] = True 
-        elif tag == "code":
-            entity = TLRPC.TL_messageEntityCode
-        elif tag == "pre":
-            entity = TLRPC.TL_messageEntityPre
-            extra["language"] = attrs.get("language", "")
-        elif tag == "spoiler":
-            entity = TLRPC.TL_messageEntitySpoiler
-        elif tag == "a":
-            url = attrs.get("href", "")
-            if url.startswith("tg://user?id="):
-                entity = TLRPC.TL_inputMessageEntityMentionName
-                try:
-                    extra["user_id"] = TLRPC.TL_inputUser()
-                    extra["user_id"].user_id = int(url.split("=")[1])
-                    extra["user_id"].access_hash = 0 # Hash нужен реальный, но для парсинга сойдет
-                except:
-                    pass
-            else:
-                entity = TLRPC.TL_messageEntityTextUrl
-                extra["url"] = url
-        elif tag == "emoji":
-            entity = TLRPC.TL_messageEntityCustomEmoji
-            try:
-                extra["document_id"] = int(attrs.get("id", 0))
-            except:
-                pass
-        
-        if not entity:
-            return
-
-        if tag not in self.tag_entities:
-            self.tag_entities[tag] = []
-
-        # Создаем экземпляр TL класса
-        tl_obj = entity()
-        tl_obj.offset = len(self.text)
-        tl_obj.length = 0
-        
-        # Применяем доп поля
-        for k, v in extra.items():
-            setattr(tl_obj, k, v)
-            
-        self.tag_entities[tag].append(tl_obj)
-
-    def handle_data(self, data):
-        # Экранирование уже снято HTMLParser'ом
-        # Но для корректной длины в entities нам нужно учитывать суррогаты, если они есть в тексте
-        # data приходит уже с суррогатами из feed()
-        
-        for tag_list in self.tag_entities.values():
-            for entity in tag_list:
-                entity.length += len(data)
-        
-        self.text += data
-
-    def handle_endtag(self, tag):
-        try:
-            if tag in self.tag_entities and self.tag_entities[tag]:
-                self.entities.append(self.tag_entities[tag].pop())
-        except:
-            pass
-
-class MandreText:
-    """
-    Мощный парсер Markdown/HTML в TLRPC Entities.
-    Использует логику Pyrogram адаптированную под Java классы.
-    """
-    
-    # Markdown Definitions
-    BOLD_DELIM = "**"
-    ITALIC_DELIM = "__"
-    UNDERLINE_DELIM = "--"
-    STRIKE_DELIM = "~~"
-    SPOILER_DELIM = "||"
-    CODE_DELIM = "`"
-    PRE_DELIM = "```"
-    BLOCKQUOTE_DELIM = ">"
-    
-    MARKDOWN_RE = re.compile(r"({d})|(!?)\[(.+?)\]\((.+?)\)".format(
-        d="|".join([re.escape(i) for i in [PRE_DELIM, CODE_DELIM, STRIKE_DELIM, UNDERLINE_DELIM, ITALIC_DELIM, BOLD_DELIM, SPOILER_DELIM]])
-    ))
-    
-    @staticmethod
-    def parse(text: str, mode: str = "markdown") -> Dict[str, Any]:
-        """
-        Парсит текст и возвращает словарь {"message": str, "entities": ArrayList}.
-        mode: 'markdown' или 'html'
-        """
-        if mode == "markdown":
-            text = MandreText._parse_markdown_to_html(text)
-        
-        # Парсим HTML (который получился из MD или был передан)
-        parser = _MandreHTMLParser()
-        # Важно: добавляем суррогаты ДО скармливания парсеру, чтобы оффсеты считались как в Java
-        parser.feed(_TextUtils.add_surrogates(text))
-        parser.close()
-        
-        # Собираем Java ArrayList
-        j_entities = ArrayList()
-        # Сортируем по оффсету
-        sorted_entities = sorted(parser.entities, key=lambda e: e.offset)
-        
-        # Фильтруем нулевую длину и добавляем в список
-        for e in sorted_entities:
-            if e.length > 0:
-                j_entities.add(e)
-                
-        # Удаляем суррогаты из итогового текста, чтобы он был нормальным Python string
-        # (Telegram клиент сам добавит их при отправке или отрисовке)
-        final_text = _TextUtils.remove_surrogates(parser.text)
-        
-        return {"message": final_text, "entities": j_entities}
-
-    @staticmethod
-    def _parse_markdown_to_html(text: str) -> str:
-        # Предварительная обработка цитат (простая версия)
-        lines = text.splitlines()
-        new_lines = []
-        in_quote = False
-        for line in lines:
-            if line.startswith(">"):
-                clean_line = line[1:].strip()
-                if not in_quote:
-                    new_lines.append("<blockquote>" + clean_line)
-                    in_quote = True
-                else:
-                    new_lines.append(clean_line)
-            else:
-                if in_quote:
-                    new_lines[-1] += "</blockquote>"
-                    in_quote = False
-                new_lines.append(line)
-        if in_quote: new_lines[-1] += "</blockquote>"
-        text = "\n".join(new_lines)
-
-        # Основной парсинг маркеров
-        text = _TextUtils.add_surrogates(text) # Работаем в пространстве UTF-16 смещений
-        delims = set()
-        is_fixed_width = False
-        
-        # Паттерн для замены URL и EMOJI
-        URL_MARKUP = '<a href="{}">{}</a>'
-        EMOJI_MARKUP = '<emoji id="{}">{}</emoji>'
-        
-        # Вспомогательная функция для замены
-        def replace_at(s, old, new, idx):
-            return s[:idx] + s[idx:].replace(old, new, 1)
-
-        # Итерация по совпадениям
-        # (Упрощенная логика Pyrogram, так как полный перенос требует state machine)
-        # Мы используем замену "на лету", проходя по тексту
-        
-        # Вариант 2: Простой проход регулярками (менее надежно для вложенности, но работает для 90% кейсов)
-        # Используем HTML парсер для финальной сборки, поэтому тут просто конвертим MD -> HTML теги
-        
-        # Bold
-        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-        # Italic
-        text = re.sub(r"\_\_(.+?)\_\_", r"<i>\1</i>", text)
-        # Spoiler
-        text = re.sub(r"\|\|(.+?)\|\|", r"<spoiler>\1</spoiler>", text)
-        # Strike
-        text = re.sub(r"\~\~(.+?)\~\~", r"<s>\1</s>", text)
-        # Monospace (Pre)
-        text = re.sub(r"```([\w]*)\n([\s\S]+?)\n```", r'<pre language="\1">\2</pre>', text)
-        # Monospace (Code)
-        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
-        # Links [text](url)
-        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
-        # Custom Emoji [alt](tg://emoji?id=123)
-        text = re.sub(r"\[(.+?)\]\(tg://emoji\?id=(\d+)\)", r'<emoji id="\2">\1</emoji>', text)
-
-        return _TextUtils.remove_surrogates(text)
-
-# --- Глобальные переменные ---
-_LATEST_FRAME = None
-_FRAME_LOCK = threading.Lock()
-
-# Колбэк для Telegram
-class _ServerCallback(dynamic_proxy(Utilities.Callback)):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-    def run(self, arg):
-        try:
-            self.fn(arg)
-        except:
-            pass
-
-# --- Глобальное состояние для стрима ---
-_LATEST_FRAME = None
-_FRAME_LOCK = threading.Lock()
-
-# Импорты для PixelCopy (добавьте это в секцию импортов или внутри класса, если там динамическая загрузка)
-try:
-    PixelCopy = find_class("android.view.PixelCopy")
-    HandlerThread = find_class("android.os.HandlerThread")
-except:
-    PixelCopy = None
-    HandlerThread = None
-
-# Менеджер стрима (Optimized In-App Drawing)
-class _InAppStreamManager:
-    def __init__(self):
-        self.running = False
-        self.width = 480  # Снизили до 480p для производительности (достаточно для превью)
-        self.quality = 60 # Качество JPEG
-        self.thread = None
-        self._reusable_bitmap = None
-        self._handler_thread = None
-        self._pixel_copy_handler = None
-        
-        # Анти-спам логов
-        self._last_error_msg = ""
-        self._last_error_time = 0
-
-    def start(self):
-        if self.running: return
-        self.running = True
-        
-        # Инициализация потока для PixelCopy (Android 8+)
-        if Build.VERSION.SDK_INT >= 26 and PixelCopy:
-            try:
-                self._handler_thread = HandlerThread("PixelCopyHandler")
-                self._handler_thread.start()
-                self._pixel_copy_handler = Handler(self._handler_thread.getLooper())
-            except Exception as e:
-                log(f"[Stream] Failed to init PixelCopy handler: {e}")
-
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
-        log("[Stream] Started (Optimized)")
-
-    def stop(self):
-        self.running = False
-        if self._handler_thread:
-            try:
-                self._handler_thread.quitSafely()
-            except:
-                self._handler_thread.quit()
-            self._handler_thread = None
-            self._pixel_copy_handler = None
-        
-        # Очистка битмапа
-        if self._reusable_bitmap and not self._reusable_bitmap.isRecycled():
-            self._reusable_bitmap.recycle()
-        self._reusable_bitmap = None
-        log("[Stream] Stopped")
-
-    def _log_error_throttled(self, msg):
-        """Пишет ошибку в лог не чаще раза в 5 секунд, чтобы не спамить"""
-        now = time.time()
-        if msg != self._last_error_msg or (now - self._last_error_time) > 5.0:
-            log(f"[Stream Error] {msg}")
-            self._last_error_msg = msg
-            self._last_error_time = now
-
-    def _loop(self):
-        while self.running:
-            t_start = time.time()
-            
-            try:
-                bmp = self._capture_ui_frame()
-                
-                if bmp:
-                    # Сжатие JPEG
-                    stream = ByteArrayOutputStream()
-                    # Используем reusable bitmap, поэтому не recycle'им его здесь!
-                    bmp.compress(Bitmap.CompressFormat.JPEG, self.quality, stream)
-                    
-                    java_bytes = stream.toByteArray()
-                    py_bytes = bytes(java_bytes)
-                    
-                    with _FRAME_LOCK:
-                        global _LATEST_FRAME
-                        _LATEST_FRAME = py_bytes
-                    
-                    stream.close()
-                    # Сбрасываем счетчик ошибок при успехе
-                    self._last_error_msg = "" 
-                
-            except Exception as e:
-                self._log_error_throttled(str(e))
-            
-            # Лимит FPS (~15 FPS достаточно для дебага)
-            dt = time.time() - t_start
-            sleep_time = max(0, 0.066 - dt) 
-            time.sleep(sleep_time)
-
-    def _capture_ui_frame(self):
-        # 1. Получаем Activity и Window
-        frag = get_last_fragment()
-        if not frag: return None
-        act = frag.getParentActivity()
-        if not act or act.isFinishing(): return None
-        
-        window = act.getWindow()
-        if not window: return None
-        
-        # Размеры окна
-        decor_view = window.getDecorView()
-        w = decor_view.getWidth()
-        h = decor_view.getHeight()
-        if w <= 0 or h <= 0: return None
-
-        # Вычисляем целевой размер
-        scale = self.width / float(w)
-        dest_w = self.width
-        dest_h = int(h * scale)
-
-        # 2. Подготовка Bitmap (Переиспользование!)
-        if (self._reusable_bitmap is None or 
-            self._reusable_bitmap.isRecycled() or 
-            self._reusable_bitmap.getWidth() != dest_w or 
-            self._reusable_bitmap.getHeight() != dest_h):
-            
-            if self._reusable_bitmap and not self._reusable_bitmap.isRecycled():
-                self._reusable_bitmap.recycle()
-            
-            try:
-                self._reusable_bitmap = Bitmap.createBitmap(dest_w, dest_h, Bitmap.Config.ARGB_8888)
-            except OutOfMemoryError:
-                self._log_error_throttled("OOM creating bitmap")
-                return None
-
-        # 3. Захват кадра (Два метода)
-        
-        # МЕТОД А: PixelCopy (Android 8+ API 26+) - БЫСТРО, не грузит UI
-        if Build.VERSION.SDK_INT >= 26 and PixelCopy and self._pixel_copy_handler:
-            result_signal = threading.Event()
-            
-            class OnCopyFinished(dynamic_proxy(PixelCopy.OnPixelCopyFinishedListener)):
-                def onPixelCopyFinished(self, result):
-                    result_signal.set()
-
-            try:
-                # PixelCopy требует Handler для колбэка
-                PixelCopy.request(window, self._reusable_bitmap, OnCopyFinished(), self._pixel_copy_handler)
-                if not result_signal.wait(0.2): # Таймаут 200мс
-                    self._log_error_throttled("PixelCopy timeout")
-                    return None
-                return self._reusable_bitmap
-            except Exception as e:
-                self._log_error_throttled(f"PixelCopy failed: {e}")
-                # Если упало, пробуем фоллбэк ниже
-        
-        # МЕТОД Б: Canvas Draw (Fallback) - МЕДЛЕННО, но работает везде
-        # Чтобы не лагало, делаем это через run_on_ui_thread, но с осторожностью
-        ui_latch = threading.Event()
-        
-        def ui_draw_task():
-            try:
-                # Используем Canvas с матрицей масштабирования, чтобы рисовать сразу в маленький битмап
-                canvas = Canvas(self._reusable_bitmap)
-                canvas.scale(scale, scale)
-                # Рисуем только DecorView (весь экран)
-                decor_view.draw(canvas)
-            except Exception as e:
-                pass
-            finally:
-                ui_latch.set()
-
-        run_on_ui_thread(ui_draw_task)
-        if ui_latch.wait(0.2):
-            return self._reusable_bitmap
-        
-        return None
-
-_STREAM_MANAGER = _InAppStreamManager()
-
-# Сервер
-class _MandreServerCore:
-    def __init__(self):
-        self.server = None
-        self.clients = set()
-        self.running = False
-        self.port = 5555
-
-    async def start(self):
-        if self.running: return
-        try:
-            self.server = await asyncio.start_server(self.handle_client, '0.0.0.0', self.port)
-            self.running = True
-            self._announce_ip()
-            async with self.server:
-                await self.server.serve_forever()
-        except Exception as e:
-            log(f"[Server] Start Error: {e}")
-            self.running = False
-
-    def _announce_ip(self):
-        try:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            run_on_ui_thread(lambda: BulletinHelper.show_success(f"API: http://{ip}:{self.port}"))
-        except:
-            pass
-
-    def stop(self):
-        if self.server:
-            self.server.close()
-            self.running = False
-        if _STREAM_MANAGER.running:
-            run_on_ui_thread(_STREAM_MANAGER.stop)
-
-    async def handle_client(self, reader, writer):
-        try:
-            line = await reader.readline()
-            if not line: return
-            parts = line.decode().strip().split()
-            if len(parts) < 2: return
-            method, full_path = parts[0], parts[1]
-            
-            path_parts = full_path.split('?', 1)
-            path = path_parts[0]
-            query_string = path_parts[1] if len(path_parts) > 1 else ""
-            query_params = {}
-            if query_string:
-                for pair in query_string.split('&'):
-                    if '=' in pair:
-                        k, v = pair.split('=', 1)
-                        query_params[k] = v
-
-            content_length = 0
-            while True:
-                line = await reader.readline()
-                if not line or line == b'\r\n': break
-                s = line.decode().lower()
-                if s.startswith("content-length:"):
-                    content_length = int(s.split(":")[1].strip())
-
-            body_bytes = b""
-            if content_length > 0:
-                body_bytes = await reader.readexactly(content_length)
-
-            if method == 'OPTIONS':
-                await self.send_cors(writer)
-                return
-
-            # --- API ---
-
-            if path == '/api/stream':
-                await self.handle_mjpeg_stream(writer)
-                return
-            
-            elif path == '/api/stream/start' and method == 'POST':
-                _STREAM_MANAGER.start()
-                await self.resp_json(writer, {"status": "started"})
-
-            elif path == '/api/stream/stop' and method == 'POST':
-                _STREAM_MANAGER.stop()
-                await self.resp_json(writer, {"status": "stopped"})
-
-            elif path == '/api/logs/stream':
-                await self.handle_sse(writer)
-                return
-
-            elif path == '/api/status':
-                await self.resp_json(writer, {
-                    "status": "running",
-                    "version": __version__,
-                    "device": MandreDevice.get_simple_info(),
-                    "streaming": _STREAM_MANAGER.running
-                })
-
-            elif path == '/api/plugins':
-                try:
-                    pc = PluginsController.getInstance()
-                    java_list = ArrayList(pc.plugins.values())
-                    py_plugins = list(java_list.toArray())
-                    plugins_json = []
-                    for p in py_plugins:
-                        try:
-                            meta = {
-                                "id": str(p.getId()),
-                                "name": str(p.getName()),
-                                "version": str(p.getVersion() or "0.0"),
-                                "enabled": bool(p.isEnabled()),
-                                "path": str(pc.getPluginPath(p.getId()))
-                            }
-                            plugins_json.append(meta)
-                        except: pass
-                    await self.resp_json(writer, {"plugins": plugins_json})
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            elif path == '/api/plugins/download' and method == 'GET':
-                try:
-                    pid = query_params.get("id")
-                    pc = PluginsController.getInstance()
-                    if not pid or not pc.plugins.containsKey(pid):
-                        await self.resp_error(writer, "Plugin not found")
-                        return
-                    fpath = pc.getPluginPath(pid)
-                    with open(fpath, 'rb') as f: content = f.read()
-                    fname = os.path.basename(fpath)
-                    h = (f"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{fname}\"\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(content)}\r\n\r\n").encode()
-                    writer.write(h)
-                    writer.write(content)
-                    await writer.drain()
-                    writer.close()
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            elif path == '/api/plugins/delete' and method == 'POST':
-                try:
-                    data = json.loads(body_bytes.decode())
-                    pid = data.get("id")
-                    run_on_ui_thread(lambda: PluginsController.getInstance().deletePlugin(pid, _ServerCallback(lambda x: None)))
-                    await self.resp_json(writer, {"status": "deleted", "id": pid})
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            elif path == '/api/plugins/upload' and method == 'POST':
-                try:
-                    data = json.loads(body_bytes.decode())
-                    fname = data.get("filename", "upload.plugin")
-                    content = data.get("content")
-                    cache_dir = str(ApplicationLoader.applicationContext.getCacheDir())
-                    temp_file = os.path.join(cache_dir, fname)
-                    with open(temp_file, "w", encoding="utf-8") as f: f.write(content)
-                    
-                    def install():
-                        pc = PluginsController.getInstance()
-                        engine = pc.engines.get("python")
-                        cb = _ServerCallback(lambda e: BulletinHelper.show_error(f"Err: {e}") if e else BulletinHelper.show_success(f"Updated: {fname}"))
-                        engine.loadPluginFromFile(temp_file, None, cb)
-                    run_on_ui_thread(install)
-                    await self.resp_json(writer, {"status": "installed"})
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            elif path == '/api/deeplink' and method == 'POST':
-                try:
-                    data = json.loads(body_bytes.decode())
-                    link = data.get("url")
-                    if link.startswith("t.me"): link = "https://" + link
-                    def open_intent():
-                        try:
-                            LaunchActivity = find_class("org.telegram.ui.LaunchActivity")
-                            intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
-                            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            intent.setClass(ApplicationLoader.applicationContext, LaunchActivity)
-                            ApplicationLoader.applicationContext.startActivity(intent)
-                        except: pass
-                    run_on_ui_thread(open_intent)
-                    await self.resp_json(writer, {"status": "opened"})
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            elif path == '/api/chat/send' and method == 'POST':
-                try:
-                    data = json.loads(body_bytes.decode())
-                    text = data.get("text", "")
-                    res = {"s": 0, "e": ""}
-                    evt = threading.Event()
-                    def send():
-                        try:
-                            frag = get_last_fragment()
-                            if not frag or not hasattr(frag, "getDialogId"):
-                                res["s"]=400; res["e"]="No chat"
-                                return
-                            
-                            if text:
-                                p = SendMessagesHelper.SendMessageParams()
-                                p.peer = frag.getDialogId()
-                                p.message = text
-                                SendMessagesHelper.getInstance(frag.getCurrentAccount()).sendMessage(p)
-                                res["s"]=200
-                            else:
-                                res["s"]=400
-                        except Exception as ex:
-                            res["s"]=500; res["e"]=str(ex)
-                        finally:
-                            evt.set()
-                    
-                    run_on_ui_thread(send)
-                    evt.wait(5.0)
-                    
-                    if res["s"]==200:
-                        await self.resp_json(writer, {"status":"sent"})
-                    else:
-                        await self.resp_json(writer, {"error": res["e"]})
-                except Exception as e:
-                    await self.resp_error(writer, str(e))
-
-            else:
-                writer.write(b"HTTP/1.1 404 Not Found\r\n\r\n")
-                await writer.drain()
-                writer.close()
-
-        except Exception:
-            try:
-                writer.close()
-            except:
-                pass
-
-    # --- Helpers ---
-
-    async def handle_mjpeg_stream(self, writer):
-        if not _STREAM_MANAGER.running:
-            _STREAM_MANAGER.start()
-        
-        boundary = "mandreframe"
-        writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary={boundary}\r\nCache-Control: no-cache\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n".encode())
-        await writer.drain()
-        
-        try:
-            while True:
-                if not _STREAM_MANAGER.running:
-                    await asyncio.sleep(1)
-                    continue
-                
-                frame = None
-                with _FRAME_LOCK:
-                    if _LATEST_FRAME:
-                        frame = _LATEST_FRAME
-                
-                if frame:
-                    writer.write(f"--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n".encode())
-                    writer.write(frame)
-                    writer.write(b"\r\n")
-                    await writer.drain()
-                
-                await asyncio.sleep(0.05)
-        except:
-            pass
-        finally:
-            try:
-                writer.close()
-            except:
-                pass
-
-    async def handle_sse(self, writer):
-        writer.write(b"HTTP/1.1 200 OK\r\n")
-        writer.write(b"Content-Type: text/event-stream\r\n")
-        writer.write(b"Cache-Control: no-cache\r\n")
-        writer.write(b"Connection: keep-alive\r\n")
-        writer.write(b"Access-Control-Allow-Origin: *\r\n\r\n")
-        await writer.drain()
-        
-        q = asyncio.Queue()
-        self.clients.add(q)
-        try:
-            while True:
-                msg = await q.get()
-                data = f"data: {json.dumps({'m': msg, 't': time.time()})}\n\n".encode('utf-8')
-                writer.write(data)
-                await writer.drain()
-        except:
-            pass
-        finally:
-            self.clients.remove(q)
-            try:
-                writer.close()
-            except:
-                pass
-
-    async def send_cors(self, writer):
-        writer.write(b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n")
-        await writer.drain()
-        writer.close()
-
-    async def resp_json(self, writer, data):
-        b = json.dumps(data).encode()
-        writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(b)}\r\n\r\n".encode() + b)
-        await writer.drain()
-        writer.close()
-
-    async def resp_error(self, writer, msg):
-        await self.resp_json(writer, {"error": str(msg)})
-
-    def broadcast(self, msg):
-        if not self.clients or not _ASYNC_MANAGER.loop: return
-        for q in list(self.clients):
-            try:
-                _ASYNC_MANAGER.loop.call_soon_threadsafe(q.put_nowait, msg)
-            except:
-                pass
-
-_MANDRE_SERVER = _MandreServerCore()
-
 class Mandre:
     UI = MandreUI
     Data = MandreData
     TTS = MandreTTS
-    Text = MandreText
     Auth = MandreAuth
     Share = MandreShare
     Device = MandreDevice
     Notification = MandreNotification
-    Settings = MandreSettings
-    Suggestions = MandreSuggestions
-    Messages = MandreMessages
-    SheetController = MandreSheetContrl
-    Async = MandreAsync
-    Decorators = MandreDecorators
-    Command = MandreDecorators.command      # Алиас для удобства @Mandre.Command
-    OnMessage = MandreDecorators.on_message # Алиас для удобства @Mandre.OnMessage
-    # Pip = MandrePip # DEPRECATED. Use MandreInstall instead.
+    Pip = MandrePip
 
     _DB_CACHE_STORAGE = None
     _DB_CACHE_DB = None
-    _DECORATED_PLUGINS = {}
-
-    class Server:
-        """
-        Управление локальным сервером разработки.
-        """
-        @staticmethod
-        def start():
-            """Запускает сервер на порту 5555"""
-            Mandre.Async.run(_MANDRE_SERVER.start())
-            # Получаем IP
-            try:
-                import socket
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
-                BulletinHelper.show_success(f"Server: http://{ip}:5555")
-            except:
-                BulletinHelper.show_success("Server started on port 5555")
-
-        @staticmethod
-        def stop():
-            _MANDRE_SERVER.stop()
-            BulletinHelper.show_info("Server stopped")
-
-    @staticmethod
-    def initialise(plugin_instance: BasePlugin):
-        """
-        Магический метод. Сканирует плагин на наличие декораторов, 
-        регистрирует хуки и активирует Smart Parsing.
-        Нужно вызывать один раз в on_plugin_load.
-        """
-        try:
-            plugin_id = plugin_instance.id
-            handlers = []
-            
-            # 1. Сканируем методы класса через inspect
-            for name, method in inspect.getmembers(plugin_instance, predicate=inspect.ismethod):
-                handler_type = getattr(method, "_mandre_handler_type", None)
-                
-                if handler_type == "command":
-                    cmd_name = getattr(method, "_mandre_cmd_name") or name
-                    aliases = getattr(method, "_mandre_cmd_aliases", [])
-                    handlers.append({
-                        "type": "command",
-                        "name": cmd_name.lower(),
-                        "aliases": [a.lower() for a in aliases],
-                        "method": method
-                    })
-                    
-                elif handler_type == "regex":
-                    handlers.append({
-                        "type": "regex",
-                        "pattern": getattr(method, "_mandre_regex_pattern"),
-                        "out": getattr(method, "_mandre_regex_out"),
-                        "in": getattr(method, "_mandre_regex_in"),
-                        "method": method
-                    })
-
-            if handlers:
-                Mandre._DECORATED_PLUGINS[plugin_id] = handlers
-                
-                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-                
-                # 1. Сохраняем ссылку на оригинальный метод (если он был переопределен юзером)
-                # Важно: берем метод класса, чтобы получить unbound function, или bound method экземпляра
-                original_hook = getattr(plugin_instance, "on_send_message_hook", None)
-                
-                # 2. Создаем обертку
-                def dispatch_wrapper(account, params):
-                    # Сначала декораторы
-                    res = Mandre._dispatch_smart_handlers(plugin_instance, params)
-                    if res: return res
-                    
-                    # Если декораторы не сработали, вызываем оригинальный код
-                    # Проверяем, чтобы это не была та же самая функция (рекурсия)
-                    if original_hook and original_hook.__name__ != "dispatch_wrapper":
-                        try: 
-                            return original_hook(account, params)
-                        except: 
-                            return HookResult()
-                    return HookResult()
-                
-                # 3. СНАЧАЛА Подменяем метод у экземпляра плагина
-                plugin_instance.on_send_message_hook = dispatch_wrapper
-                
-                # 4. И ТОЛЬКО ПОТОМ регистрируем хук в системе
-                # Теперь система увидит наш dispatch_wrapper
-                plugin_instance.add_on_send_message_hook(priority=100)
-                
-                log(f"[MandreLib] Initialised {len(handlers)} smart handlers for {plugin_id}")
-        
-        except Exception as e:
-            log(f"[MandreLib] Init error for {plugin_instance.id}: {traceback.format_exc()}")
-
-    @staticmethod
-    def _dispatch_smart_handlers(plugin, params) -> Optional[HookResult]:
-        try:
-            # ИСПРАВЛЕНИЕ: params это Java объект, берем атрибут напрямую
-            msg = getattr(params, "message", None)
-            
-            # Если сообщения нет или это не строка (например, файл без подписи), выходим
-            if not msg or not isinstance(msg, str): return None
-            
-            handlers = Mandre._DECORATED_PLUGINS.get(plugin.id, [])
-            
-            if _mandrelib_instance:
-                prefix = _mandrelib_instance.get_setting("command_prefix", ".")
-            else:
-                prefix = "."
-            
-            for h in handlers:
-                # --- ЛОГИКА КОМАНД ---
-                if h["type"] == "command":
-                    if not msg.startswith(prefix): continue
-                    
-                    parts = msg[len(prefix):].split(' ', 1)
-                    cmd_trigger = parts[0].lower()
-                    args_str = parts[1] if len(parts) > 1 else ""
-                    
-                    if cmd_trigger == h["name"] or cmd_trigger in h["aliases"]:
-                        return Mandre._execute_smart_command(h["method"], args_str, params)
-
-                # --- ЛОГИКА REGEX ---
-                elif h["type"] == "regex":
-                    if not h["out"]: continue
-                    
-                    pattern = h["pattern"]
-                    if pattern and re.search(pattern, msg):
-                        try:
-                            res = h["method"](params)
-                            if res is False: return HookResult(strategy=HookStrategy.CANCEL)
-                            if res: return res
-                        except Exception as e:
-                            log(f"[MandreLib] Regex handler error: {e}")
-
-            return None
-        except Exception as e:
-            log(f"[MandreLib] Dispatch error: {e}")
-            return None
-
-    @staticmethod
-    def _execute_smart_command(method, args_str: str, params) -> HookResult:
-        """
-        SMART ARGUMENT PARSER
-        Анализирует сигнатуру функции и преобразует строку аргументов в типы Python.
-        """
-        try:
-            sig = inspect.signature(method)
-            bound_args = {}
-            
-            # Используем shlex для умного разбиения кавычек: .cmd "hello world" 123
-            try:
-                split_args = shlex.split(args_str)
-            except:
-                split_args = args_str.split()
-
-            iterator = iter(split_args)
-            
-            for name, param in sig.parameters.items():
-                # 1. Пропускаем 'self' (уже привязан)
-                if name == "self": continue
-                
-                # 2. Специальный аргумент 'message' или 'msg' или 'params' -> передаем сырой объект
-                if name in ("message", "msg", "params", "ctx"):
-                    bound_args[name] = params
-                    continue
-
-                # 3. Если аргументов не осталось
-                try:
-                    val_str = next(iterator)
-                except StopIteration:
-                    if param.default != inspect.Parameter.empty:
-                        bound_args[name] = param.default
-                        continue
-                    else:
-                        # Аргумент обязателен, но его нет -> Ошибка или Help
-                        Mandre.Notification.show_simple("Ошибка", f"Не хватает аргумента: {name}")
-                        return HookResult(strategy=HookStrategy.CANCEL)
-
-                # 4. CASTING TYPES
-                annotation = param.annotation
-                if annotation != inspect.Parameter.empty:
-                    try:
-                        if annotation == int:
-                            bound_args[name] = int(val_str)
-                        elif annotation == float:
-                            bound_args[name] = float(val_str)
-                        elif annotation == bool:
-                            # Умный булеан: 'true', '1', 'on' -> True
-                            bound_args[name] = val_str.lower() in ("true", "1", "yes", "on", "t")
-                        else:
-                            bound_args[name] = val_str
-                    except ValueError:
-                        Mandre.Notification.show_simple("Ошибка типа", f"Аргумент '{name}' должен быть {annotation.__name__}")
-                        return HookResult(strategy=HookStrategy.CANCEL)
-                else:
-                    # Без аннотации - просто строка
-                    bound_args[name] = val_str
-
-            # Вызов метода
-            res = method(**bound_args)
-            
-            # Обработка результата
-            if isinstance(res, HookResult): return res
-            if isinstance(res, str):
-                # Умная обработка Markdown
-                # Если строка содержит спецсимволы, пробуем распарсить
-                if any(c in res for c in "*_`[<"):
-                    try:
-                        parsed = Mandre.Text.parse(res, mode="markdown")
-                        params.message = parsed["message"]
-                        params.entities = parsed["entities"]
-                    except Exception as e:
-                        log(f"[MandreLib] Markdown auto-parse error: {e}")
-                        params.message = res
-                else:
-                    params.message = res
-                    
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            
-            return HookResult(strategy=HookStrategy.CANCEL)
-
-        except Exception as e:
-            log(f"[MandreLib SmartArgs] Error: {traceback.format_exc()}")
-            Mandre.Notification.show_simple("System Error", str(e))
-            return HookResult(strategy=HookStrategy.CANCEL)
     
     @staticmethod
     def add_tg_alias(path: str, callback: Callable[[Intent], None]):
@@ -4028,75 +1614,13 @@ class Mandre:
         if plugin_instance.id: Mandre.remove_tg_alias(plugin_instance.id); log(f"[MandreLib] Алиас настроек для {plugin_instance.id} удален.")
             
     @staticmethod
-    def apply_and_refresh_settings(plugin_instance):
+    def apply_and_refresh_settings(plugin_instance: BasePlugin):
         def refresher():
             try:
-                # Импортируем R под другим именем, чтобы не было конфликтов
-                from android_utils import R as RunnableArg 
-
-                fragment = get_last_fragment()
-                listView = None
-                
-                if fragment:
-                    cls_name = str(fragment.getClass().getName())
-                    if "PluginSettingsActivity" in cls_name:
-                        listView = get_private_field(fragment, "listView")
-
-                if not listView:
-                    PluginsController.getInstance().loadPluginSettings(plugin_instance.id)
-                    return
-
-                # 1. FADE OUT (Быстро скрываем)
-                # Важно: duration поменьше, чтобы отзывчивость была высокой
-                listView.animate()\
-                    .alpha(0.0)\
-                    .scaleX(0.95)\
-                    .scaleY(0.95)\
-                    .setDuration(100)\
-                    .setInterpolator(DecelerateInterpolator())\
-                    .withEndAction(RunnableArg(lambda: _on_fade_out_complete(listView, plugin_instance.id)))\
-                    .start()
-
-            except Exception as e:
-                log(f"[MandreLib] Anim error: {e}")
                 PluginsController.getInstance().loadPluginSettings(plugin_instance.id)
-
-        def _on_fade_out_complete(listView, pid):
-            try:
-                # 2. ПОДМЕНА ДАННЫХ
-                # Список сейчас полностью прозрачен (alpha=0)
-                PluginsController.getInstance().loadPluginSettings(pid)
-                
-                # 3. ПАУЗА ДЛЯ ЛЕЙАУТА (FIX ГЛИТЧА)
-                # Мы не запускаем анимацию появления мгновенно.
-                # Даем списку 40мс, чтобы он успел отрисовать новые элементы "за кадром".
-                # Если этого не сделать, анимация начнется со старым кадром.
-                
-                def start_fade_in():
-                    try:
-                        # Подготовка к появлению
-                        listView.setAlpha(0.0) # Гарантируем прозрачность
-                        listView.setScaleX(0.97)
-                        listView.setScaleY(0.97)
-                        listView.setTranslationY(float(AndroidUtilities.dp(10)))
-                        
-                        # 4. FADE IN (Появление)
-                        listView.animate()\
-                            .alpha(1.0)\
-                            .scaleX(1.0)\
-                            .scaleY(1.0)\
-                            .translationY(0.0)\
-                            .setDuration(200)\
-                            .setInterpolator(DecelerateInterpolator())\
-                            .start()
-                    except: pass
-
-                # Используем встроенную функцию отложенного запуска
-                run_on_ui_thread(start_fade_in, delay=150)
-
+                log(f"[MandreLib] Настройки для {plugin_instance.id} перезагружены через контроллер.")
             except Exception as e:
-                log(f"[MandreLib] Anim swap error: {e}")
-
+                log(f"[MandreLib] Критическая ошибка при обновлении настроек: {e}")
         run_on_ui_thread(refresher)
         
     @staticmethod
@@ -4257,83 +1781,6 @@ class Mandre:
             pass
 
     @staticmethod
-    def auto_translate_inline_strings(plugin_instance: BasePlugin, strings: List[str]):
-        try:
-            plugin_id = plugin_instance.id
-            user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
-            
-            # 1. Проверка TARGETlang в плагине
-            target_lang_override = getattr(plugin_instance, "TARGETlang", None)
-            if target_lang_override:
-                target_lang_override = str(target_lang_override).strip().lower()
-                # Если язык плагина совпадает с языком пользователя - перевод не нужен.
-                if target_lang_override == user_lang:
-                    return
-
-            cache_key = f"{plugin_id}_{user_lang}"
-            
-            # Загрузка кэша с диска, если в памяти пусто
-            if cache_key not in _LOCALIZATION_CACHE:
-                disk_cache = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json", {})
-                if disk_cache:
-                    _LOCALIZATION_CACHE[cache_key] = disk_cache
-
-            cache = _LOCALIZATION_CACHE.get(cache_key, {})
-            if cache_key not in _LOCALIZATION_CACHE:
-                _LOCALIZATION_CACHE[cache_key] = cache
-
-            # Уникализируем и отфильтруем уже переведенные
-            to_translate: List[str] = []
-            seen = set()
-            for s in strings:
-                if not isinstance(s, str):
-                    continue
-                key = s.strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                if not cache.get(key):
-                    to_translate.append(key)
-
-            if not to_translate:
-                return
-
-            # Вызов AI. Если TARGETlang не задан, AI определит исходный язык сам.
-            translated_values_str = Mandre._call_pollinations_api_for_json(to_translate, user_lang)
-            if not translated_values_str:
-                log(f"[MandreLib AutoLoc] Не удалось получить inline переводы для {plugin_id} на {user_lang}")
-                return
-
-            translated_values = json.loads(translated_values_str)
-            if len(translated_values) != len(to_translate):
-                log(f"[MandreLib AutoLoc] Несоответствие количества inline переводов: {len(translated_values)} != {len(to_translate)}")
-                return
-
-            for original, translated in zip(to_translate, translated_values):
-                cache[original] = translated
-
-            # Сохраняем в persistent JSON
-            try:
-                base_dir = MandreData._get_base_data_dir().getAbsolutePath()
-                locale_dir_path = os.path.join(base_dir, plugin_id, "locales")
-                os.makedirs(locale_dir_path, exist_ok=True)
-            except Exception:
-                pass
-            
-            existing = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json")
-            if not isinstance(existing, dict):
-                existing = {}
-            existing.update(cache)
-            MandreData.write_persistent_json(plugin_id, f"locales/{user_lang}.json", existing)
-            log(f"[MandreLib AutoLoc] Inline переводов добавлено для {plugin_id} на {user_lang}: {len(to_translate)}")
-            
-            # САМОЕ ГЛАВНОЕ: Перезагружаем настройки, чтобы перевод применился сразу
-            run_on_ui_thread(lambda: Mandre.apply_and_refresh_settings(plugin_instance))
-
-        except Exception:
-            log(f"[MandreLib AutoLoc] Ошибка в auto_translate_inline_strings: {traceback.format_exc()}")
-
-    @staticmethod
     def register_synthetic_channel(channel_id: int, title: str, megagroup: bool = False, broadcast: bool = True):
         try:
             mc = get_messages_controller()
@@ -4413,22 +1860,89 @@ class Mandre:
         plugin_id = plugin_instance.id
         user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
         
-        # Проверяем кэш в памяти (он заполняется через auto_translate или загрузку с диска)
         cache_key = f"{plugin_id}_{user_lang}"
-        
-        if cache_key not in _LOCALIZATION_CACHE:
-             # Пытаемся лениво загрузить с диска, если еще не загружено
-            disk_cache = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json", {})
-            if disk_cache:
-                _LOCALIZATION_CACHE[cache_key] = disk_cache
-        
         if cache_key in _LOCALIZATION_CACHE:
             translated_text = _LOCALIZATION_CACHE[cache_key].get(key)
             if translated_text:
                 return translated_text.format(**kwargs) if kwargs else translated_text
 
-        # Если перевода нет, возвращаем оригинал
+        original_translations = _LOCALIZATIONS.get(plugin_id)
+        if original_translations:
+            original_text = original_translations.get(key, key)
+            return original_text.format(**kwargs) if kwargs else original_text
+
         return key.format(**kwargs) if kwargs else key
+        
+    @staticmethod
+    def register_localizations(plugin_instance: BasePlugin, source_lang: str, translations: Dict[str, str]):
+        plugin_id = plugin_instance.id
+        _LOCALIZATIONS[plugin_id] = translations
+        
+        user_lang = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode().split('-')[0]
+        
+        cache_key = f"{plugin_id}_{user_lang}"
+        if cache_key not in _LOCALIZATION_CACHE:
+            cached_translation = MandreData.read_persistent_json(plugin_id, f"locales/{user_lang}.json")
+            if cached_translation:
+                _LOCALIZATION_CACHE[cache_key] = cached_translation
+                log(f"[MandreLib AutoLoc] Загружен кэш локализации для {plugin_id} на {user_lang}.")
+
+        if user_lang == source_lang:
+            log(f"[MandreLib AutoLoc] Язык пользователя ({user_lang}) совпадает с языком плагина {plugin_id}. Перевод не требуется.")
+            return
+        
+        offered_key = f"localization_offered_{plugin_id}_{user_lang}"
+        if _mandrelib_instance and _mandrelib_instance.get_setting(offered_key, False):
+            log(f"[MandreLib AutoLoc] Локализация для {plugin_id} на {user_lang} уже предлагалась.")
+            return
+            
+        def start_flow():
+            run_on_ui_thread(lambda: BulletinHelper.show_info(f"Обнаружен плагин {plugin_instance.name}. Предлагаю перевод на ваш язык..."))
+            run_on_queue(lambda: Mandre._translation_worker(plugin_instance, user_lang, source_lang))
+
+        threading.Timer(5.0, start_flow).start()
+
+    @staticmethod
+    def _translation_worker(plugin_instance, user_lang, source_lang):
+        try:
+            plugin_id = plugin_instance.id
+            translations = _LOCALIZATIONS.get(plugin_id)
+            if not translations:
+                log(f"[MandreLib AutoLoc] Нет словаря для перевода плагина {plugin_id}.")
+                return
+
+            log(f"[MandreLib AutoLoc] Начало процесса перевода для {plugin_id} с {source_lang} на {user_lang}")
+            
+            values_to_translate = list(translations.values())
+            translated_values_str = Mandre._call_pollinations_api_for_json(values_to_translate, user_lang)
+            
+            if not translated_values_str:
+                log(f"[MandreLib AutoLoc] Не удалось получить перевод.")
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Ошибка перевода. Попробуйте позже."))
+                return
+
+            translated_values = json.loads(translated_values_str)
+            if len(translated_values) != len(translations):
+                 log(f"[MandreLib AutoLoc] Несоответствие количества переведенных строк.")
+                 run_on_ui_thread(lambda: BulletinHelper.show_error("Ошибка формата перевода."))
+                 return
+            
+            translated_dict = dict(zip(translations.keys(), translated_values))
+            
+            locale_dir_path = os.path.join(MandreData._get_base_data_dir().getAbsolutePath(), plugin_id, "locales")
+            os.makedirs(locale_dir_path, exist_ok=True)
+            
+            MandreData.write_persistent_json(plugin_id, f"locales/{user_lang}.json", translated_dict)
+            _LOCALIZATION_CACHE[f"{plugin_id}_{user_lang}"] = translated_dict
+            log(f"[MandreLib AutoLoc] Локализация для {plugin_id} на {user_lang} сохранена.")
+            
+            if _mandrelib_instance:
+                _mandrelib_instance.set_setting(f"localization_offered_{plugin_id}_{user_lang}", True)
+                run_on_ui_thread(lambda: BulletinHelper.show_success("Перевод готов! Перезапустите плагин или приложение для применения."))
+
+        except Exception:
+            log(f"[MandreLib AutoLoc] Ошибка в translation_worker: {traceback.format_exc()}")
+            run_on_ui_thread(lambda: BulletinHelper.show_error("Произошла ошибка во время перевода."))
     
     @staticmethod
     def _call_pollinations_api_for_json(values: List[str], target_lang: str) -> Optional[str]:
@@ -4438,7 +1952,6 @@ class Mandre:
             
             prompt = (
                 f"You are a translation assistant. Translate the following JSON array of strings into {lang_name}. "
-                f"Detect the source language automatically. "
                 f"Your response must be ONLY a valid JSON array containing the translated strings in the exact same order. "
                 f"Do not add any explanations, markdown, or other text outside of the JSON array. "
                 f"Original JSON array:\n\n{json_to_translate}"
@@ -4447,7 +1960,7 @@ class Mandre:
             url = "https://text.pollinations.ai/openai"
             headers = {"Content-Type": "application/json"}
             payload = {
-                "model": "openai-fast",
+                "model": "mistral",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False
             }
@@ -4482,27 +1995,6 @@ class _ActivityResultHook(MethodHook):
                 self.plugin.unhook_method(self.plugin._activity_hook)
                 self.plugin._activity_hook = None
 
-class _AppLogHook(MethodHook):
-    def before_hooked_method(self, param):
-        try:
-            msg = str(param.args[0])
-            # level = param.args[2] # 0=D, 1=I, 2=W, 3=E
-            
-            # Отправляем на сервер
-            # Добавим подсветку для важных тегов
-            if "[MandreLib]" in msg: msg = f"🔥 {msg}"
-            elif "[MandreAsync]" in msg: msg = f"⚡ {msg}"
-            elif "Command" in msg and "plugin" in msg: msg = f"🎮 {msg}"
-            
-            # Можно добавить префикс уровня лога, если хочешь
-            # levels = {0: "D", 1: "I", 2: "W", 3: "E"}
-            # lvl = levels.get(int(param.args[2]), "?")
-            # msg = f"[{lvl}] {msg}"
-
-            _MANDRE_SERVER.broadcast(msg)
-        except:
-            pass
-
 class MandreLibPlugin(BasePlugin):
     def __init__(self):
         super().__init__()
@@ -4514,24 +2006,6 @@ class MandreLibPlugin(BasePlugin):
         _mandrelib_instance = self
         self.log(f"Библиотека '{self.name} v{self.version}' загружена.")
         _ensure_tg_hook(self)
-
-        # --- НОВЫЙ ХУК ЛОГОВ ---
-        try:
-            AppUtils = find_class("com.exteragram.messenger.utils.AppUtils")
-            if AppUtils:
-                String = find_class("java.lang.String")
-                Throwable = find_class("java.lang.Throwable")
-                Integer = find_class("java.lang.Integer")
-                
-                method = AppUtils.getClass().getDeclaredMethod(
-                    "logInternal", String, Throwable, Integer.TYPE
-                )
-                method.setAccessible(True)
-                self.hook_method(method, _AppLogHook())
-                self.log("[MandreLib] Системный хук логов активирован.")
-        except Exception as e:
-            self.log(f"[MandreLib] Ошибка хука логов: {e}")
-        # -----------------------
         
     def on_plugin_unload(self):
         global _mandrelib_instance
