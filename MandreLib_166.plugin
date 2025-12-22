@@ -43,7 +43,9 @@ import time
 import threading
 import os
 import json
+import importlib.util 
 import zipfile
+import shutil
 import requests
 import re
 import sys
@@ -5092,6 +5094,545 @@ class MandreGraphics:
             log(traceback.format_exc())
             return None
 
+# --- СИСТЕМА MANDRE PACKAGE (Вставлять ПЕРЕД MandreLibPlugin) ---
+
+class MandreMeta:
+    def __init__(self, content: str):
+        self.raw = content
+        self.data = {}
+        self._parse()
+
+    def _parse(self):
+        import re
+        pattern = re.compile(r'(\w+)\s*=\s*(?:"""(.*?)"""|"(.*?)")', re.DOTALL)
+        matches = pattern.findall(self.raw)
+        for key, val_multi, val_single in matches:
+            val = val_multi if val_multi else val_single
+            self.data[key.strip()] = val.strip()
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+class MandrePackageLoader:
+    def __init__(self, plugin_instance, pid: str, main_file: str):
+        self.plugin = plugin_instance
+        self.pid = pid
+        self.main_file = main_file
+        self.pkg_dir = os.path.join(MandrePackage.PACKAGES_DIR, pid)
+        self.loaded_modules = [] 
+        self._main_module = None
+
+    def load(self):
+        if not os.path.exists(self.pkg_dir):
+            self.plugin.log(f"[MandrePkg] Path not found: {self.pkg_dir}")
+            return
+
+        # 1. Добавляем путь в sys.path для импортов
+        if self.pkg_dir not in sys.path:
+            sys.path.insert(0, self.pkg_dir)
+
+        # 2. Грузим DEX рекурсивно
+        dex_count = 0
+        for root, dirs, files in os.walk(self.pkg_dir):
+            for f in files:
+                if f.endswith(".dex"):
+                    if self._load_dex(os.path.join(root, f)): dex_count += 1
+        
+        # 3. Грузим Python
+        if self.main_file.endswith(".py"):
+            main_path = os.path.join(self.pkg_dir, self.main_file)
+            if os.path.exists(main_path):
+                self._load_python_entry(main_path)
+            else:
+                self.plugin.log(f"[MandrePkg] Main file missing: {self.main_file}")
+
+    def _load_dex(self, path):
+        try:
+            from dalvik.system import InMemoryDexClassLoader
+            from java.nio import ByteBuffer
+            with open(path, "rb") as f: dex_bytes = f.read()
+            parent = ApplicationLoader.applicationContext.getClassLoader()
+            _ = InMemoryDexClassLoader(ByteBuffer.wrap(dex_bytes), parent)
+            return True
+        except: return False
+
+    def _load_python_entry(self, path):
+        try:
+            mod_name = f"mandre_pkg.{self.pid}.main"
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = module
+                self.loaded_modules.append(mod_name)
+                spec.loader.exec_module(module)
+                self._main_module = module
+                if hasattr(module, "on_load"):
+                    module.on_load(self.plugin)
+                    self.plugin.log(f"[MandrePkg] {self.pid} loaded.")
+        except Exception as e:
+            self.plugin.log(f"[MandrePkg] Py Error: {traceback.format_exc()}")
+
+    def unload(self):
+        if self.pkg_dir in sys.path: sys.path.remove(self.pkg_dir)
+        if self._main_module and hasattr(self._main_module, "on_unload"):
+            try: self._main_module.on_unload(self.plugin)
+            except: pass
+        for m in self.loaded_modules:
+            if m in sys.modules: del sys.modules[m]
+
+class MandrePackage:
+    PACKAGES_DIR = os.path.join(str(ApplicationLoader.getFilesDirFixed()), "plugins", "mandre_packages")
+
+    @staticmethod
+    def install(path: str, listener=None) -> tuple:
+        """Возвращает (success, error_msg, meta_object)"""
+        try:
+            # 1. Читаем мету
+            temp_meta = None
+            has_main_py = False
+            try:
+                with zipfile.ZipFile(path, 'r') as zf:
+                    names = zf.namelist()
+                    if "meta.mandre" not in names:
+                        return False, "Нет meta.mandre", None
+                    if "main.py" in names:
+                        has_main_py = True
+                    
+                    with zf.open("meta.mandre") as f:
+                        temp_meta = MandreMeta(f.read().decode('utf-8'))
+            except: return False, "Ошибка чтения ZIP", None
+
+            pid = temp_meta.get("id")
+            if not pid: return False, "Нет ID в meta", None
+
+            # 2. Распаковка
+            target_dir = os.path.join(MandrePackage.PACKAGES_DIR, pid)
+            if os.path.exists(target_dir): shutil.rmtree(target_dir)
+            os.makedirs(target_dir)
+
+            if listener: listener(f"Распаковка {pid}...")
+            with zipfile.ZipFile(path, 'r') as zf: zf.extractall(target_dir)
+
+            # 3. АВТО-ГЕНЕРАЦИЯ MAIN.PY (Если это DEX-плагин)
+            if not has_main_py:
+                main_class = temp_meta.get("main_class")
+                if main_class:
+                    if listener: listener("Генерация Java-моста...")
+                    MandrePackage._generate_auto_main(target_dir, main_class)
+                else:
+                    return False, "Нет main.py и не указан main_class!", None
+
+            # 4. Зависимости
+            req_path = os.path.join(target_dir, "requirements.txt")
+            if os.path.exists(req_path):
+                if listener: listener("Установка библиотек...")
+                try:
+                    with open(req_path, 'r', encoding='utf-8') as f:
+                        reqs = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+                        if reqs: MandreInstall(reqs)
+                except Exception as e:
+                    log(f"[MandrePkg] Pip Warn: {e}")
+
+            # 5. Генерация враппера
+            if listener: listener("Регистрация...")
+            MandrePackage._create_wrapper(pid, temp_meta)
+
+            return True, "OK", temp_meta
+
+        except Exception as e:
+            return False, str(e), None
+
+    @staticmethod
+    def _generate_auto_main(target_dir, main_class):
+        """Создает универсальный main.py для Java плагинов (Injection Version)"""
+        content = f'''
+# Auto-generated bridge for Injected Java Plugin
+from base_plugin import BasePlugin
+from ui.settings import Text
+from ui.bulletin import BulletinHelper
+from mandre_lib import Mandre
+from hook_utils import find_class
+
+# Класс, который мы ищем (теперь он виден глобально!)
+TARGET_CLASS = "{main_class}"
+_instance_box = []
+
+def on_load(plugin: BasePlugin):
+    global _instance_box
+    plugin.log(f"Starting Java plugin: {{TARGET_CLASS}}")
+    
+    try:
+        # 1. Находим класс стандартным способом (работает благодаря инъекции)
+        try:
+            cls = find_class(TARGET_CLASS)
+        except:
+            # Фолбек на ручной поиск, если кэш Chaquopy тупит
+            JClass = find_class("java.lang.Class")
+            cls = JClass.forName(TARGET_CLASS)
+            
+        if not cls: raise Exception("Class not found via injection")
+
+        # 2. Инициализация (getInstance или конструктор)
+        inst = _get_instance(cls, plugin)
+        if not inst: raise Exception("Instance init failed")
+        
+        _instance_box = [inst]
+
+        # 3. Запуск
+        try:
+            Mandre.Reflect.invoke(_instance_box[0], "start", arg_types=[])
+            plugin.log("Java start() executed")
+        except:
+            plugin.log("No start() method, skipping")
+
+    except Exception as e:
+        import traceback
+        plugin.log(f"Bridge Error: {{e}}\\n{{traceback.format_exc()}}")
+        BulletinHelper.show_error(f"Start Error: {{e}}")
+
+def _get_instance(cls, plugin):
+    # getInstance
+    try:
+        inst = Mandre.Reflect.invoke(cls, "getInstance", arg_types=[])
+        if inst: return inst
+    except: pass
+    
+    # Constructor (взлом приватного)
+    try:
+        ctor = cls.getDeclaredConstructor()
+        ctor.setAccessible(True)
+        return ctor.newInstance()
+    except Exception as e:
+        plugin.log(f"Constructor Error: {{e}}")
+    return None
+
+def on_unload(plugin):
+    global _instance_box
+    if _instance_box:
+        try:
+            Mandre.Reflect.invoke(_instance_box[0], "onUnload", arg_types=[])
+        except: pass
+    _instance_box = []
+
+def create_settings():
+    return [Text("Настройки", icon="msg_settings", on_click=open_settings)]
+
+def open_settings():
+    if _instance_box:
+        try:
+            Mandre.Reflect.invoke(_instance_box[0], "showSettings", arg_types=[])
+        except Exception as e:
+            BulletinHelper.show_error(f"Settings Error: {{e}}")
+'''
+        with open(os.path.join(target_dir, "main.py"), "w", encoding="utf-8") as f:
+            f.write(content)
+
+    @staticmethod
+    def _create_wrapper(pid: str, meta: MandreMeta):
+        wrap_path = os.path.join(str(ApplicationLoader.getFilesDirFixed()), "plugins", f"{pid}.py")
+        esc = lambda s: s.replace('"""', "\\\"\\\"\\\"") if s else ""
+        
+        code = f'''# Generated by MandreLib
+__id__ = "{meta.get("id")}"
+__name__ = "{esc(meta.get("name"))}"
+__version__ = "{meta.get("version")}"
+__author__ = """{esc(meta.get("author"))}"""
+__description__ = """{esc(meta.get("description"))}"""
+__min_version__ = "{meta.get("min_version", "1.0")}"
+__icon__ = "{meta.get("icon", "msg_settings")}"
+
+from base_plugin import BasePlugin
+try:
+    from mandre_lib import Mandre
+except ImportError:
+    Mandre = None
+
+class MandreWrapper_{pid}(BasePlugin):
+    def on_plugin_load(self):
+        if not Mandre: return
+        self._loader = Mandre.PackageLoader(self, "{pid}", "{meta.get("main_file", "main.py")}")
+        self._loader.load()
+
+    def on_plugin_unload(self):
+        if hasattr(self, "_loader"):
+            self._loader.unload()
+
+    def create_settings(self):
+        # ПРОКСИРОВАНИЕ НАСТРОЕК
+        # Если загрузчик отработал и в main.py есть функция create_settings — вызываем её
+        if hasattr(self, "_loader") and self._loader._main_module:
+            if hasattr(self._loader._main_module, "create_settings"):
+                try:
+                    return self._loader._main_module.create_settings()
+                except Exception as e:
+                    from ui.settings import Text
+                    return [Text(f"Ошибка настроек: {{e}}", color="#ff0000")]
+        return None
+'''
+        with open(wrap_path, "w", encoding="utf-8") as f: f.write(code)
+
+class MandrePackageLoader:
+    def __init__(self, plugin_instance, pid: str, main_file: str):
+        self.plugin = plugin_instance
+        self.pid = pid
+        self.main_file = main_file
+        self.pkg_dir = os.path.join(MandrePackage.PACKAGES_DIR, pid)
+        self.loaded_modules = []
+        self._main_module = None
+
+    def load(self):
+        if not os.path.exists(self.pkg_dir):
+            self.plugin.log(f"[MandrePkg] Папка не найдена: {self.pkg_dir}")
+            return
+        
+        # 1. Добавляем путь для Python
+        if self.pkg_dir not in sys.path:
+            sys.path.insert(0, self.pkg_dir)
+
+        # 2. Инъекция DEX в систему
+        # Мы ищем все .dex файлы и "вливаем" их в приложение
+        dex_files = []
+        for root, dirs, files in os.walk(self.pkg_dir):
+            for f in files:
+                if f.endswith(".dex"):
+                    dex_files.append(os.path.join(root, f))
+        
+        if dex_files:
+            self._inject_dex_files(dex_files)
+        
+        # 3. Запуск Python
+        if self.main_file.endswith(".py"):
+            main_path = os.path.join(self.pkg_dir, self.main_file)
+            if os.path.exists(main_path):
+                self._load_python_entry(main_path)
+
+    def _inject_dex_files(self, paths):
+        """Внедряет DEX файлы в основной ClassLoader приложения"""
+        try:
+            # Импорты
+            BaseDexClassLoader = find_class("dalvik.system.BaseDexClassLoader")
+            PathClassLoader = find_class("dalvik.system.PathClassLoader")
+            Array = find_class("java.lang.reflect.Array")
+            
+            # 1. Получаем системный лоадер (в который будем внедрять)
+            app_loader = ApplicationLoader.applicationContext.getClassLoader()
+            
+            # 2. Получаем pathList системного лоадера
+            # pathList - это приватное поле в BaseDexClassLoader
+            f_pathList = MandreReflect.get_field(BaseDexClassLoader, "pathList") # Это объект, не класс
+            # А нам нужен Field объект, чтобы сделать get()
+            # Используем хак через to_java_class из твоего MandreReflect, 
+            # но проще сделать вручную тут, чтобы наверняка.
+            
+            # Получаем класс BaseDexClassLoader через рефлексию
+            BDCL_Class = Mandre.Reflect._to_java_class(BaseDexClassLoader)
+            f_pathList_field = BDCL_Class.getDeclaredField("pathList")
+            f_pathList_field.setAccessible(True)
+            system_path_list = f_pathList_field.get(app_loader)
+            
+            # 3. Создаем временный лоадер для наших DEX файлов
+            # path_str = список путей через двоеточие
+            path_str = ":".join(paths)
+            # optimizedDirectory = null (используем дефолтную)
+            temp_loader = PathClassLoader(path_str, None, app_loader)
+            
+            # 4. Достаем dexElements из обоих лоадеров
+            # DexPathList класс
+            DPL_Class = system_path_list.getClass()
+            f_dexElements_field = DPL_Class.getDeclaredField("dexElements")
+            f_dexElements_field.setAccessible(True)
+            
+            system_elements = f_dexElements_field.get(system_path_list)
+            
+            # Достаем pathList у временного лоадера
+            temp_path_list = f_pathList_field.get(temp_loader)
+            new_elements = f_dexElements_field.get(temp_path_list)
+            
+            # 5. Объединяем массивы (System + New)
+            # Тип элементов (Element)
+            ElementClass = system_elements.getClass().getComponentType()
+            
+            sys_len = Array.getLength(system_elements)
+            new_len = Array.getLength(new_elements)
+            
+            # Создаем новый массив
+            combined_elements = Array.newInstance(ElementClass, sys_len + new_len)
+            
+            # Копируем: Сначала НОВЫЕ (чтобы они перекрывали старые или находились первыми), потом системные
+            # Или наоборот? Обычно добавляют в начало для патчинга.
+            from java.lang import System as JSystem
+            JSystem.arraycopy(new_elements, 0, combined_elements, 0, new_len)
+            JSystem.arraycopy(system_elements, 0, combined_elements, new_len, sys_len)
+            
+            # 6. Подменяем поле в системном лоадере
+            f_dexElements_field.set(system_path_list, combined_elements)
+            
+            self.plugin.log(f"[MandrePkg] Injected {new_len} DEX elements into system.")
+            
+        except Exception as e:
+            import traceback
+            self.plugin.log(f"[MandrePkg] Injection Failed: {e}\n{traceback.format_exc()}")
+
+    def get_class(self, class_name):
+        """Ищет класс в загруженных DEX файлах"""
+        for loader in self.dex_loaders:
+            try:
+                return loader.loadClass(class_name)
+            except:
+                continue
+        return None
+
+    def _load_python_entry(self, path):
+        try:
+            mod_name = f"mandre_pkg.{self.pid}.main"
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = module
+                self.loaded_modules.append(mod_name)
+                spec.loader.exec_module(module)
+                self._main_module = module
+                if hasattr(module, "on_load"):
+                    module.on_load(self.plugin)
+        except Exception as e:
+            self.plugin.log(f"[MandrePkg] Py Error: {traceback.format_exc()}")
+
+    def unload(self):
+        if self.pkg_dir in sys.path: sys.path.remove(self.pkg_dir)
+        if self._main_module and hasattr(self._main_module, "on_unload"):
+            try: self._main_module.on_unload(self.plugin)
+            except: pass
+        for m in self.loaded_modules:
+            if m in sys.modules: del sys.modules[m]
+        self.dex_loaders.clear()
+
+# --- ГЛОБАЛЬНЫЕ КЛАССЫ ХУКОВ (Чтобы не было NameError) ---
+
+class _PkgValidateHook(MethodHook):
+    def after_hooked_method(self, param):
+        try:
+            path = str(param.args[0])
+            if path.endswith(".mandre") or path.endswith(".zip"):
+                import zipfile
+                is_pkg = False
+                try:
+                    with zipfile.ZipFile(path, 'r') as zf:
+                        if "meta.mandre" in zf.namelist():
+                            with zf.open("meta.mandre") as f:
+                                meta = MandreMeta(f.read().decode('utf-8'))
+                            is_pkg = True
+                except: pass
+
+                if is_pkg:
+                    PluginCls = find_class("com.exteragram.messenger.plugins.Plugin")
+                    p = PluginCls(meta.get("id"), meta.get("name"))
+                    p.setDescription(f"📦 [Mandre Package]\n{meta.get('description', '')}")
+                    p.setAuthor(meta.get("author", ""))
+                    p.setVersion(meta.get("version", "1.0"))
+                    
+                    ResultCls = find_class("com.exteragram.messenger.plugins.PluginsController$PluginValidationResult")
+                    param.setResult(ResultCls(p, None))
+        except: pass
+
+class _PkgLoadHook(MethodHook):
+    def before_hooked_method(self, param):
+        path = str(param.args[0])
+        cb = param.args[2]
+        
+        if path.endswith(".mandre"):
+            param.setResult(None)
+            def runner():
+                def listener(msg): run_on_ui_thread(lambda: BulletinHelper.show_info(msg))
+                try:
+                    # 1. Установка
+                    success, msg, meta = MandrePackage.install(path, listener)
+                    
+                    if success and meta:
+                        # 2. Инъекция в движок (через рефлексию)
+                        run_on_ui_thread(lambda: self._trigger_engine_load(meta))
+                        
+                        if cb: run_on_ui_thread(lambda: cb.run(None))
+                    else:
+                        run_on_ui_thread(lambda err=msg: BulletinHelper.show_error(f"Err: {err}"))
+                        if cb: run_on_ui_thread(lambda: cb.run("Install Failed"))
+                except Exception as e:
+                    if cb: run_on_ui_thread(lambda: cb.run(str(e)))
+            threading.Thread(target=runner).start()
+
+    def _trigger_engine_load(self, meta):
+        try:
+            pid = meta.get("id")
+            wrapper_path = os.path.join(str(ApplicationLoader.getFilesDirFixed()), "plugins", f"{pid}.py")
+            
+            # 1. Получаем контроллер через Reflect
+            PCWrapper = find_class("com.exteragram.messenger.plugins.PluginsController")
+            PCCls = Mandre.Reflect._to_java_class(PCWrapper)
+            # getInstance() статический
+            PC = PCCls.getDeclaredMethod("getInstance").invoke(None)
+            
+            # 2. Получаем движок
+            engine = PC.engines.get("python")
+            
+            # 3. Получаем класс движка
+            EngineWrapper = find_class("com.exteragram.messenger.plugins.PythonPluginsEngine")
+            EngineCls = Mandre.Reflect._to_java_class(EngineWrapper)
+            
+            # 4. Вызываем loadPlugin через рефлексию
+            JString = find_class("java.lang.String")
+            JStringCls = Mandre.Reflect._to_java_class(JString)
+            
+            load_method = EngineCls.getDeclaredMethod("loadPlugin", JStringCls, JStringCls)
+            load_method.setAccessible(True)
+            load_method.invoke(engine, pid, wrapper_path)
+            
+            # 5. Обновляем UI (ИСПРАВЛЕНО: через рефлексию)
+            # notifyPluginsChanged - package-private метод, нужен setAccessible
+            notify_method = PCCls.getDeclaredMethod("notifyPluginsChanged")
+            notify_method.setAccessible(True)
+            notify_method.invoke(PC)
+            
+            BulletinHelper.show_success(f"Плагин '{meta.get('name')}' загружен!")
+            
+        except Exception as e:
+            import traceback
+            log(f"Engine Load Error: {e}\n{traceback.format_exc()}")
+            BulletinHelper.show_error(f"Load Error: {e}")
+            
+class _PkgIsPluginHook(MethodHook):
+    """Говорит движку, что .mandre это тоже плагин"""
+    def after_hooked_method(self, param):
+        try:
+            f = param.args[0]
+            if f and str(f.getName()).endswith(".mandre"):
+                param.setResult(True)
+        except: pass
+
+class _OpenMandreHook(MethodHook):
+    def before_hooked_method(self, param):
+        try:
+            f = param.args[0]
+            if not f: return
+            path = str(f.getAbsolutePath())
+            if path.endswith(".mandre"):
+                param.setResult(True)
+                run_on_ui_thread(lambda: self._trigger_install(path))
+        except: pass
+
+    def _trigger_install(self, path):
+        try:
+            PC = find_class("com.exteragram.messenger.plugins.PluginsController").getInstance()
+            frag = get_last_fragment()
+            if frag:
+                # Ищем метод showInstallDialog(BaseFragment, String, boolean)
+                for m in PC.getClass().getDeclaredMethods():
+                    if m.getName() == "showInstallDialog":
+                        pt = m.getParameterTypes()
+                        if len(pt) == 3 and pt[1].getName() == "java.lang.String":
+                            m.invoke(PC, frag, path, False)
+                            return
+        except Exception as e:
+            BulletinHelper.show_error(f"Error: {e}")
+
 class Mandre:
     UI = MandreUI
     TTS = MandreTTS
@@ -5103,6 +5644,8 @@ class Mandre:
     Device = MandreDevice
     Async = MandreAsync
     Reflect = MandreReflect
+    Package = MandrePackage
+    PackageLoader = MandrePackageLoader
     Sensors = MandreSensors
     Graphics = MandreGraphics
     Command = MandreDecorators.command # Алиас для удобства @Mandre.Command
@@ -5935,6 +6478,53 @@ class MandreLibPlugin(BasePlugin):
         except Exception as e:
             self.log(f"[MandreLib] Ошибка хука логов: {e}")
         # -----------------------
+
+        # 2. Хуки инсталлятора
+        try:
+            EngineWrapper = find_class("com.exteragram.messenger.plugins.PythonPluginsEngine")
+            EngineClass = Mandre.Reflect._to_java_class(EngineWrapper)
+            String = find_class("java.lang.String")
+            PluginCls = find_class("com.exteragram.messenger.plugins.Plugin")
+            CallbackCls = find_class("org.telegram.messenger.Utilities$Callback")
+            JavaFile = find_class("java.io.File")
+            
+            val_method = EngineClass.getDeclaredMethod("validatePluginFromFile", String)
+            self.hook_method(val_method, _PkgValidateHook()) 
+            
+            load_method = EngineClass.getDeclaredMethod("loadPluginFromFile", String, PluginCls, CallbackCls)
+            self.hook_method(load_method, _PkgLoadHook())
+            
+            # Хук isPlugin, чтобы контроллер не отсеивал файл .mandre до валидации
+            is_plugin_method = EngineClass.getDeclaredMethod("isPlugin", JavaFile)
+            self.hook_method(is_plugin_method, _PkgIsPluginHook())
+            
+            self.log("Pkg Installer: Active")
+        except Exception as e:
+            self.log(f"Install Hook Error: {e}")
+
+        # 3. Хук открытия файла
+        try:
+            AndroidUtilsWrapper = find_class("org.telegram.messenger.AndroidUtilities")
+            AndroidUtils = Mandre.Reflect._to_java_class(AndroidUtilsWrapper)
+            JavaFile = find_class("java.io.File")
+            
+            hooked = 0
+            for m in AndroidUtils.getDeclaredMethods():
+                if m.getName() == "openForView":
+                    pt = m.getParameterTypes()
+                    if len(pt) > 0 and pt[0].getName() == "java.io.File":
+                        self.hook_method(m, _OpenMandreHook())
+                        hooked += 1
+            if hooked > 0: self.log("Open Hook: Active")
+        except Exception as e:
+            self.log(f"Open Hook Error: {e}")
+
+    def on_plugin_unload(self):
+        global _mandrelib_instance
+        _internal_shutdown_tts()
+        _mandrelib_instance = None
+        self.log(f"Библиотека выгружена.")
+        Mandre.Sensors.stop_all()
         
     def on_plugin_unload(self):
         global _mandrelib_instance
@@ -6351,3 +6941,4 @@ class MandreLibPlugin(BasePlugin):
                 create_sub_fragment=self._create_data_management_fragment
             )
         ]
+
